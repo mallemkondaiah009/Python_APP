@@ -7,76 +7,72 @@ from db.storage import (
     get_linked_customers,
     link_customer_to_item,
     unlink_customer_from_item,
+    export_ledger_csv,
 )
-
-INK = "#14161C"
-SURFACE = "#1E212B"
-SURFACE_ALT = "#242836"
-BRASS = "#C6A15B"
-BRASS_DIM = "#3A3626"
-IVORY = "#F5F1E8"
-SLATE = "#8B90A0"
+from ui.theme import (
+    INK, SURFACE, SURFACE_ALT, BRASS, BRASS_DIM, IVORY, SLATE, CLAY,
+    SPACE_SM, SPACE_MD, SPACE_LG, SPACE_XL, RADIUS_MD, RADIUS_LG,
+    eyebrow_text, heading_text, subheading_text, header_cell_text, data_cell_text,
+    primary_button, icon_action_button, app_text_field,
+    table_shell, row_bg, empty_state, snack,
+)
 
 COL_WIDTH = 110
 CUSTOMERS_COL_WIDTH = 130
-ACTION_COL_WIDTH = 50
-TABLE_WIDTH = COL_WIDTH * len(COLUMNS) + CUSTOMERS_COL_WIDTH + ACTION_COL_WIDTH
+ACTION_COL_WIDTH = 56
+ROW_END_SPACER = 12
+TABLE_WIDTH = COL_WIDTH * len(COLUMNS) + CUSTOMERS_COL_WIDTH + ACTION_COL_WIDTH + ROW_END_SPACER
 
 
 def build_ledger_view(page: ft.Page):
-    def header_cell(label):
-        return ft.Text(
-            label.replace("_", " ").upper(), size=10, weight=ft.FontWeight.W_600,
-            color=BRASS, style=ft.TextStyle(letter_spacing=1),
-        )
-
-    def data_cell(value):
-        return ft.Text(str(value), size=12, color=IVORY)
-
     table_header = ft.Container(
         content=ft.Row(
-            [ft.Container(header_cell(c), width=COL_WIDTH) for c in COLUMNS]
-            + [ft.Container(header_cell("Customers"), width=CUSTOMERS_COL_WIDTH)]
-            + [ft.Container(header_cell(""), width=ACTION_COL_WIDTH)],
+            [ft.Container(header_cell_text(c), width=COL_WIDTH) for c in COLUMNS]
+            + [ft.Container(header_cell_text("Customers"), width=CUSTOMERS_COL_WIDTH)]
+            + [ft.Container(width=ACTION_COL_WIDTH)]
+            + [ft.Container(width=ROW_END_SPACER)],
             spacing=0,
         ),
-        padding=ft.Padding(14, 10, 14, 10),
+        padding=ft.Padding(SPACE_LG, SPACE_MD, 0, SPACE_MD),
         bgcolor=SURFACE_ALT,
         width=TABLE_WIDTH,
     )
 
     ledger_rows = ft.Column(spacing=0, width=TABLE_WIDTH)
+    table_container = table_shell(table_header, ledger_rows, TABLE_WIDTH)
+    table_container.visible = False
 
-    table_scroll = ft.Row(
-        controls=[ft.Column([table_header, ledger_rows], spacing=0, width=TABLE_WIDTH)],
-        scroll=ft.ScrollMode.ALWAYS,
-    )
+    empty_container = empty_state("No stock rows found. Upload a CSV to get started.")
+    empty_container.visible = False
 
-    table_container = ft.Container(
-        content=table_scroll,
-        bgcolor=SURFACE,
-        border=ft.Border.all(1, BRASS_DIM),
-        border_radius=8,
-        clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
-        width=340,
-        visible=False,
-    )
+    # ---------- export ----------
+    export_picker = ft.FilePicker()
+    page.services.append(export_picker)
 
-    empty_msg = ft.Text("No stock rows found.", size=12, color=SLATE, visible=False)
-
-    def show_snack(message):
-        page.show_dialog(
-            ft.SnackBar(content=ft.Text(message, color=IVORY), bgcolor=SURFACE_ALT)
+    async def on_export_click(e):
+        save_path = await export_picker.save_file(
+            dialog_title="Export stock ledger",
+            file_name="stock_ledger_export.csv",
+            file_type=ft.FilePickerFileType.CUSTOM,
+            allowed_extensions=["csv"],
         )
+        if not save_path:
+            return  # user cancelled
+
+        try:
+            csv_text = export_ledger_csv()
+            with open(save_path, "w", encoding="utf-8", newline="") as f:
+                f.write(csv_text)
+            snack(page, f"Exported to {save_path}")
+        except Exception as ex:
+            snack(page, f"Export failed: {ex}", accent=CLAY)
+        page.update()
 
     # ---------- link customers dialog ----------
     link_item_code = {"value": None}
-    link_checkboxes_column = ft.Column(spacing=6, scroll=ft.ScrollMode.AUTO, height=260)
-    link_dialog_title = ft.Text(
-        "Link Customers", size=18, color=IVORY, weight=ft.FontWeight.W_600,
-        style=ft.TextStyle(font_family="Playfair"),
-    )
-    link_dialog_sub = ft.Text("", size=12, color=SLATE)
+    link_checkboxes_column = ft.Column(spacing=SPACE_SM, scroll=ft.ScrollMode.AUTO, height=260)
+    link_dialog_title = heading_text("Link Customers", size=18)
+    link_dialog_sub = subheading_text("")
 
     def close_link_dialog(e=None):
         page.pop_dialog()
@@ -108,25 +104,21 @@ def build_ledger_view(page: ft.Page):
         page.pop_dialog()
         page.update()
         refresh_current_view()
-        show_snack(f"Updated links for {item_code}")
+        snack(page, f"Updated links for {item_code}")
         page.update()
 
     link_dialog = ft.AlertDialog(
         modal=True,
         bgcolor=SURFACE,
-        shape=ft.RoundedRectangleBorder(radius=12),
+        shape=ft.RoundedRectangleBorder(radius=RADIUS_LG),
         title=ft.Column([link_dialog_title, link_dialog_sub], spacing=4, tight=True),
-        content=ft.Container(content=link_checkboxes_column, width=320),
+        content=ft.Container(content=link_checkboxes_column, width=320, padding=ft.Padding(0, SPACE_SM, 0, 0)),
         actions=[
-            ft.TextButton("Cancel", on_click=close_link_dialog, style=ft.ButtonStyle(color=SLATE)),
-            ft.ElevatedButton(
-                "Save", on_click=save_links,
-                style=ft.ButtonStyle(
-                    bgcolor=BRASS, color=INK,
-                    shape=ft.RoundedRectangleBorder(radius=8),
-                    text_style=ft.TextStyle(weight=ft.FontWeight.W_600),
-                ),
+            ft.TextButton(
+                content=ft.Text("Cancel", color=SLATE, size=13, weight=ft.FontWeight.W_600),
+                on_click=close_link_dialog,
             ),
+            primary_button("Save", on_click=save_links),
         ],
         actions_alignment=ft.MainAxisAlignment.END,
     )
@@ -149,6 +141,7 @@ def build_ledger_view(page: ft.Page):
                     value=(cid in linked_ids),
                     data=cid,
                     label_style=ft.TextStyle(color=IVORY, size=13),
+                    active_color=BRASS,
                 )
                 for cid, code, name, number in all_customers
             ]
@@ -158,7 +151,7 @@ def build_ledger_view(page: ft.Page):
     def render_rows(rows):
         if not rows:
             table_container.visible = False
-            empty_msg.visible = True
+            empty_container.visible = True
             page.update()
             return
 
@@ -176,29 +169,32 @@ def build_ledger_view(page: ft.Page):
             row_controls.append(
                 ft.Container(
                     content=ft.Row(
-                        [ft.Container(data_cell(v), width=COL_WIDTH) for v in row]
-                        + [ft.Container(data_cell(linked_display), width=CUSTOMERS_COL_WIDTH)]
+                        [ft.Container(data_cell_text(v), width=COL_WIDTH) for v in row]
+                        + [ft.Container(
+                            data_cell_text(linked_display, muted=(linked_display == "—")),
+                            width=CUSTOMERS_COL_WIDTH,
+                        )]
                         + [
                             ft.Container(
-                                content=ft.IconButton(
-                                    icon=ft.Icons.LINK,
-                                    icon_color=BRASS,
-                                    icon_size=16,
-                                    tooltip="Link customers",
-                                    on_click=lambda e, ic=item_code: open_link_dialog(ic),
+                                content=icon_action_button(
+                                    ft.Icons.LINK, BRASS, "Link customers",
+                                    lambda e, ic=item_code: open_link_dialog(ic),
                                 ),
                                 width=ACTION_COL_WIDTH,
+                                alignment=ft.Alignment.CENTER,
                             )
-                        ],
+                        ]
+                        + [ft.Container(width=ROW_END_SPACER)],
                         spacing=0,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
-                    padding=ft.Padding(14, 6, 14, 6),
-                    bgcolor=SURFACE if i % 2 == 0 else SURFACE_ALT,
+                    padding=ft.Padding(SPACE_LG, SPACE_SM, 0, SPACE_SM),
+                    bgcolor=row_bg(i),
                 )
             )
         ledger_rows.controls = row_controls
         table_container.visible = True
-        empty_msg.visible = False
+        empty_container.visible = False
         page.update()
 
     def load_all():
@@ -211,34 +207,33 @@ def build_ledger_view(page: ft.Page):
             return
         render_rows(search_stock(query, limit=100))
 
-    search_field = ft.TextField(
-        hint_text="Search by item_code or item_tag",
-        prefix_icon=ft.Icons.SEARCH,
-        border_color=BRASS_DIM,
-        focused_border_color=BRASS,
-        text_style=ft.TextStyle(color=IVORY),
-        hint_style=ft.TextStyle(color=SLATE),
-        cursor_color=BRASS,
-        bgcolor=SURFACE,
-        border_radius=8,
-        on_change=on_search_change,
+    search_field = app_text_field(
+        label=None, hint="Search by item code or tag",
+        on_change=on_search_change, prefix_icon=ft.Icons.SEARCH,
     )
 
-    header_row = ft.Text(
-        "LEDGER · ALL RECORDS", size=11, weight=ft.FontWeight.W_600,
-        color=SLATE, style=ft.TextStyle(letter_spacing=1),
+    export_btn = primary_button(
+        "Export CSV", on_click=on_export_click, icon=ft.Icons.FILE_DOWNLOAD_OUTLINED, expand=True,
     )
 
     load_all()  # show existing stock data immediately
 
     return ft.Container(
         content=ft.Column(
-            [search_field, ft.Container(height=6), header_row, ft.Container(height=6),
-             table_container, empty_msg],
-            spacing=14,
+            [
+                search_field,
+                ft.Container(height=SPACE_SM),
+                eyebrow_text("Ledger · All Records"),
+                ft.Container(height=SPACE_SM),
+                table_container,
+                empty_container,
+                ft.Container(height=SPACE_SM),
+                export_btn,
+            ],
+            spacing=SPACE_LG,
             scroll=ft.ScrollMode.AUTO,
         ),
-        padding=20,
+        padding=SPACE_XL,
         bgcolor=INK,
         expand=True,
     )

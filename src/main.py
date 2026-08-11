@@ -2,6 +2,7 @@ import flet as ft
 from ui.ledger_view import build_ledger_view
 from ui.upload_view import build_upload_view
 from ui.customer_view import build_customers_view
+from db.storage import init_customer_table, init_link_table 
 
 INK = "#14161C"
 SURFACE = "#1E212B"
@@ -12,6 +13,9 @@ SLATE = "#8B90A0"
 
 
 def main(page: ft.Page):
+    init_customer_table()   
+    init_link_table()       
+
     page.title = "Stock Uploader"
     page.theme_mode = ft.ThemeMode.DARK
     page.bgcolor = INK

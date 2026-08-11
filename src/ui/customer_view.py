@@ -1,83 +1,43 @@
 import flet as ft
 from db.storage import store_customer, update_customer, delete_customer, fetch_customers
-
-INK = "#14161C"
-SURFACE = "#1E212B"
-SURFACE_ALT = "#242836"
-BRASS = "#C6A15B"
-BRASS_DIM = "#3A3626"
-IVORY = "#F5F1E8"
-SLATE = "#8B90A0"
-CLAY = "#E2685C"
+from ui.theme import (
+    INK, SURFACE, SURFACE_ALT, BRASS, BRASS_DIM, IVORY, SLATE, CLAY,
+    SPACE_SM, SPACE_MD, SPACE_LG, SPACE_XL, RADIUS_LG,
+    eyebrow_text, heading_text, subheading_text, header_cell_text, data_cell_text,
+    primary_button, danger_button, icon_action_button, app_text_field,
+    table_shell, row_bg, empty_state, snack,
+)
 
 CUST_COLUMNS = ["customer_code", "customer_name", "customer_number"]
 COL_WIDTH = 140
-ACTION_COL_WIDTH = 90
-TABLE_WIDTH = COL_WIDTH * len(CUST_COLUMNS) + ACTION_COL_WIDTH
+ACTION_COL_WIDTH = 84
+ROW_END_SPACER = 12
+TABLE_WIDTH = COL_WIDTH * len(CUST_COLUMNS) + ACTION_COL_WIDTH + ROW_END_SPACER
 
 
 def build_customers_view(page: ft.Page):
-    customer_rows = ft.Column(spacing=0, width=TABLE_WIDTH)
-
-    def header_cell(label):
-        return ft.Text(
-            label.replace("_", " ").upper(), size=10, weight=ft.FontWeight.W_600,
-            color=BRASS, style=ft.TextStyle(letter_spacing=1),
-        )
-
-    def data_cell(value):
-        return ft.Text(str(value) if value else "—", size=12, color=IVORY)
-
     table_header = ft.Container(
         content=ft.Row(
-            [ft.Container(header_cell(c), width=COL_WIDTH) for c in CUST_COLUMNS]
-            + [ft.Container(header_cell(""), width=ACTION_COL_WIDTH)],
+            [ft.Container(header_cell_text(c), width=COL_WIDTH) for c in CUST_COLUMNS]
+            + [ft.Container(width=ACTION_COL_WIDTH)]
+            + [ft.Container(width=ROW_END_SPACER)],
             spacing=0,
         ),
-        padding=ft.Padding(14, 10, 14, 10),
+        padding=ft.Padding(SPACE_LG, SPACE_MD, 0, SPACE_MD),
         bgcolor=SURFACE_ALT,
         width=TABLE_WIDTH,
     )
 
-    table_scroll = ft.Row(
-        controls=[ft.Column([table_header, customer_rows], spacing=0, width=TABLE_WIDTH)],
-        scroll=ft.ScrollMode.ALWAYS,
-    )
+    customer_rows = ft.Column(spacing=0, width=TABLE_WIDTH)
+    customers_table_container = table_shell(table_header, customer_rows, TABLE_WIDTH)
+    customers_table_container.visible = False
 
-    customers_table_container = ft.Container(
-        content=table_scroll,
-        bgcolor=SURFACE,
-        border=ft.Border.all(1, BRASS_DIM),
-        border_radius=8,
-        clip_behavior=ft.ClipBehavior.ANTI_ALIAS,
-        width=340,
-        visible=False,
-    )
-
-    empty_msg = ft.Text("No customers yet — tap 'Add Customer' to create one.", size=12, color=SLATE)
-
-    # ---------- snackbar helper ----------
-    def show_snack(message, color=BRASS):
-        page.show_dialog(
-            ft.SnackBar(
-                content=ft.Text(message, color=IVORY),
-                bgcolor=SURFACE_ALT,
-            )
-        )
+    empty_container = empty_state("No customers yet — tap 'Add Customer' to create one.")
 
     # ---------- shared form fields (used by both Add and Edit dialogs) ----------
-    def field(label, hint, keyboard=None):
-        return ft.TextField(
-            label=label, hint_text=hint, keyboard_type=keyboard,
-            border_color=BRASS_DIM, focused_border_color=BRASS,
-            label_style=ft.TextStyle(color=SLATE, size=12),
-            text_style=ft.TextStyle(color=IVORY),
-            cursor_color=BRASS, bgcolor=SURFACE, border_radius=8,
-        )
-
-    code_field = field("Customer Code", "Enter Customer Code")
-    name_field = field("Customer Name", "Enter Customer Name")
-    number_field = field("Customer Number", "Enter Customer Number", ft.KeyboardType.PHONE)
+    code_field = app_text_field("Customer Code", "Enter customer code")
+    name_field = app_text_field("Customer Name", "Enter customer name")
+    number_field = app_text_field("Customer Number", "Enter phone number", keyboard=ft.KeyboardType.PHONE)
     error_text = ft.Text("", size=12, color=CLAY, visible=False)
 
     # tracks which customer id is currently being edited; None = Add mode
@@ -114,38 +74,32 @@ def build_customers_view(page: ft.Page):
             page.pop_dialog()
             page.update()
             refresh_customers()
-            show_snack("Customer updated" if was_editing else "Customer added")
+            snack(page, "Customer updated" if was_editing else "Customer added")
             page.update()
         except Exception as ex:
             error_text.value = str(ex)
             error_text.visible = True
             page.update()
 
-    dialog_title = ft.Text(
-        "Add Customer", size=20, color=IVORY, weight=ft.FontWeight.W_600,
-        style=ft.TextStyle(font_family="Playfair"),
-    )
-    dialog_subtitle = ft.Text("Enter customer details below", size=12, color=SLATE)
+    dialog_title = heading_text("Add Customer", size=20)
+    dialog_subtitle = subheading_text("Enter customer details below")
 
     dialog = ft.AlertDialog(
         modal=True,
         bgcolor=SURFACE,
-        shape=ft.RoundedRectangleBorder(radius=12),
+        shape=ft.RoundedRectangleBorder(radius=RADIUS_LG),
         title=ft.Column([dialog_title, dialog_subtitle], spacing=4, tight=True),
         content=ft.Container(
-            content=ft.Column([code_field, name_field, number_field, error_text], spacing=16, tight=True),
+            content=ft.Column([code_field, name_field, number_field, error_text], spacing=SPACE_LG, tight=True),
             width=320,
+            padding=ft.Padding(0, SPACE_SM, 0, 0),
         ),
         actions=[
-            ft.TextButton("Cancel", on_click=close_dialog, style=ft.ButtonStyle(color=SLATE)),
-            ft.ElevatedButton(
-                "Save Customer", on_click=save_customer,
-                style=ft.ButtonStyle(
-                    bgcolor=BRASS, color=INK,
-                    shape=ft.RoundedRectangleBorder(radius=8),
-                    text_style=ft.TextStyle(weight=ft.FontWeight.W_600),
-                ),
+            ft.TextButton(
+                content=ft.Text("Cancel", color=SLATE, size=13, weight=ft.FontWeight.W_600),
+                on_click=close_dialog,
             ),
+            primary_button("Save Customer", on_click=save_customer),
         ],
         actions_alignment=ft.MainAxisAlignment.END,
     )
@@ -180,25 +134,21 @@ def build_customers_view(page: ft.Page):
             page.pop_dialog()
             page.update()
             refresh_customers()
-            show_snack(f"Deleted '{name}'", color=CLAY)
+            snack(page, f"Deleted '{name}'", accent=CLAY)
             page.update()
 
     delete_dialog = ft.AlertDialog(
         modal=True,
         bgcolor=SURFACE,
-        shape=ft.RoundedRectangleBorder(radius=12),
-        title=ft.Text("Delete Customer", size=18, color=IVORY, weight=ft.FontWeight.W_600),
+        shape=ft.RoundedRectangleBorder(radius=RADIUS_LG),
+        title=heading_text("Delete Customer", size=18),
         content=delete_confirm_text,
         actions=[
-            ft.TextButton("Cancel", on_click=close_delete_dialog, style=ft.ButtonStyle(color=SLATE)),
-            ft.ElevatedButton(
-                "Delete", on_click=confirm_delete,
-                style=ft.ButtonStyle(
-                    bgcolor=CLAY, color=IVORY,
-                    shape=ft.RoundedRectangleBorder(radius=8),
-                    text_style=ft.TextStyle(weight=ft.FontWeight.W_600),
-                ),
+            ft.TextButton(
+                content=ft.Text("Cancel", color=SLATE, size=13, weight=ft.FontWeight.W_600),
+                on_click=close_delete_dialog,
             ),
+            danger_button("Delete", on_click=confirm_delete),
         ],
         actions_alignment=ft.MainAxisAlignment.END,
     )
@@ -214,7 +164,7 @@ def build_customers_view(page: ft.Page):
         rows = fetch_customers(limit=100)
         if not rows:
             customers_table_container.visible = False
-            empty_msg.visible = True
+            empty_container.visible = True
             return
 
         row_controls = []
@@ -223,69 +173,60 @@ def build_customers_view(page: ft.Page):
             row_controls.append(
                 ft.Container(
                     content=ft.Row(
-                        [ft.Container(data_cell(v), width=COL_WIDTH) for v in (code, name, number)]
+                        [ft.Container(data_cell_text(v), width=COL_WIDTH) for v in (code, name, number)]
                         + [
                             ft.Container(
                                 content=ft.Row(
                                     [
-                                        ft.IconButton(
-                                            icon=ft.Icons.EDIT_OUTLINED,
-                                            icon_color=BRASS,
-                                            icon_size=16,
-                                            tooltip="Edit",
-                                            on_click=lambda e, cid=customer_id, c=code, n=name, num=number: open_edit_dialog(cid, c, n, num),
+                                        icon_action_button(
+                                            ft.Icons.EDIT_OUTLINED, BRASS, "Edit",
+                                            lambda e, cid=customer_id, c=code, n=name, num=number:
+                                                open_edit_dialog(cid, c, n, num),
                                         ),
-                                        ft.IconButton(
-                                            icon=ft.Icons.DELETE_OUTLINE,
-                                            icon_color=CLAY,
-                                            icon_size=16,
-                                            tooltip="Delete",
-                                            on_click=lambda e, cid=customer_id, n=name: open_delete_dialog(cid, n),
+                                        icon_action_button(
+                                            ft.Icons.DELETE_OUTLINE, CLAY, "Delete",
+                                            lambda e, cid=customer_id, n=name: open_delete_dialog(cid, n),
                                         ),
                                     ],
-                                    spacing=0,
+                                    spacing=4,
+                                    alignment=ft.MainAxisAlignment.CENTER,
+                                    tight=True,
                                 ),
                                 width=ACTION_COL_WIDTH,
+                                alignment=ft.Alignment.CENTER,
                             )
-                        ],
+                        ]
+                        + [ft.Container(width=ROW_END_SPACER)],
                         spacing=0,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
-                    padding=ft.Padding(14, 6, 14, 6),
-                    bgcolor=SURFACE if i % 2 == 0 else SURFACE_ALT,
+                    padding=ft.Padding(SPACE_LG, SPACE_SM, 0, SPACE_SM),
+                    bgcolor=row_bg(i),
                 )
             )
 
         customer_rows.controls = row_controls
         customers_table_container.visible = True
-        empty_msg.visible = False
+        empty_container.visible = False
 
-    add_btn = ft.ElevatedButton(
-        "ADD CUSTOMER",
-        icon=ft.Icons.PERSON_ADD_ALT_1,
-        on_click=open_add_dialog,
-        style=ft.ButtonStyle(
-            bgcolor=BRASS, color=INK, padding=18,
-            shape=ft.RoundedRectangleBorder(radius=8),
-            text_style=ft.TextStyle(weight=ft.FontWeight.W_600, letter_spacing=1, size=13),
-        ),
-        expand=True,
-    )
-
-    header_row = ft.Text(
-        "CUSTOMERS · ALL RECORDS", size=11, weight=ft.FontWeight.W_600,
-        color=SLATE, style=ft.TextStyle(letter_spacing=1),
-    )
+    add_btn = primary_button("Add Customer", on_click=open_add_dialog, icon=ft.Icons.PERSON_ADD_ALT_1, expand=True)
 
     refresh_customers()  # load existing customers immediately
 
     return ft.Container(
         content=ft.Column(
-            [add_btn, ft.Container(height=6), header_row, ft.Container(height=10),
-             customers_table_container, empty_msg],
-            spacing=10,
+            [
+                add_btn,
+                ft.Container(height=SPACE_SM),
+                eyebrow_text("Customers · All Records"),
+                ft.Container(height=SPACE_SM),
+                customers_table_container,
+                empty_container,
+            ],
+            spacing=SPACE_LG,
             scroll=ft.ScrollMode.AUTO,
         ),
-        padding=20,
+        padding=SPACE_XL,
         bgcolor=INK,
         expand=True,
     )

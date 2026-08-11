@@ -21,7 +21,7 @@ def get_db_path():
 
     Flet 0.86+ exposes the durable, app-private data directory via the
     FLET_APP_STORAGE_DATA environment variable (there is no ft.app_data_path
-    attribute in this version — referencing it always raises AttributeError,
+    attribute in this version -- referencing it always raises AttributeError,
     on desktop and on-device alike). This directory is pre-created, preserved
     across app updates, and is also the process's working directory in
     production builds. We still resolve lazily and cache the result so it's
@@ -136,6 +136,31 @@ def store_customer(customer_code, customer_name, customer_number):
     conn.close()
 
 
+def update_customer(customer_id, customer_code, customer_name, customer_number):
+    """Update an existing customer row by id."""
+    init_customer_table()
+    conn = sqlite3.connect(get_db_path())
+    conn.execute(
+        f"""UPDATE {CUSTOMER_TABLE}
+            SET customer_code = ?, customer_name = ?, customer_number = ?
+            WHERE id = ?""",
+        (customer_code.strip(), customer_name.strip(), (customer_number or "").strip(), customer_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def delete_customer(customer_id):
+    """Delete a customer row by id, and any stock links pointing to it."""
+    init_customer_table()
+    init_link_table()
+    conn = sqlite3.connect(get_db_path())
+    conn.execute(f"DELETE FROM {CUSTOMER_TABLE} WHERE id = ?", (customer_id,))
+    conn.execute(f"DELETE FROM {LINK_TABLE} WHERE customer_id = ?", (customer_id,))
+    conn.commit()
+    conn.close()
+
+
 def fetch_customers(limit=100):
     """Returns rows as (id, customer_code, customer_name, customer_number)."""
     init_customer_table()
@@ -148,6 +173,7 @@ def fetch_customers(limit=100):
     rows = cur.fetchall()
     conn.close()
     return rows
+
 
 LINK_TABLE = "stock_customer_links"
 
@@ -190,6 +216,7 @@ def unlink_customer_from_item(item_code, customer_id):
 
 def get_linked_customers(item_code):
     """Returns [(customer_id, customer_code, customer_name), ...] linked to this item."""
+    init_customer_table()
     init_link_table()
     conn = sqlite3.connect(get_db_path())
     cur = conn.cursor()
@@ -204,26 +231,32 @@ def get_linked_customers(item_code):
     conn.close()
     return rows
 
-def update_customer(customer_id, customer_code, customer_name, customer_number):
-    """Update an existing customer row by id."""
-    init_customer_table()
-    conn = sqlite3.connect(get_db_path())
-    conn.execute(
-        f"""UPDATE {CUSTOMER_TABLE}
-            SET customer_code = ?, customer_name = ?, customer_number = ?
-            WHERE id = ?""",
-        (customer_code.strip(), customer_name.strip(), (customer_number or "").strip(), customer_id),
-    )
-    conn.commit()
-    conn.close()
 
-
-def delete_customer(customer_id):
-    """Delete a customer row by id, and any stock links pointing to it."""
-    init_customer_table()
+def export_ledger_csv():
+    """Returns CSV text: stock columns + a linked_customers column (comma-joined names)."""
     init_link_table()
+    init_customer_table()
     conn = sqlite3.connect(get_db_path())
-    conn.execute(f"DELETE FROM {CUSTOMER_TABLE} WHERE id = ?", (customer_id,))
-    conn.execute(f"DELETE FROM {LINK_TABLE} WHERE customer_id = ?", (customer_id,))
-    conn.commit()
+    cur = conn.cursor()
+    try:
+        cur.execute(f"""
+            SELECT u.rowid, u.item_code, u.item_tag, u.purity, u.net_weight, u.gross_weight,
+                   GROUP_CONCAT(c.customer_name, ', ') AS customers
+            FROM {TABLE_NAME} u
+            LEFT JOIN {LINK_TABLE} l ON l.item_code = u.item_code
+            LEFT JOIN {CUSTOMER_TABLE} c ON c.id = l.customer_id
+            GROUP BY u.rowid
+            ORDER BY u.rowid
+        """)
+        rows = cur.fetchall()
+    except sqlite3.OperationalError:
+        rows = []
     conn.close()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(COLUMNS + ["linked_customers"])
+    for row in rows:
+        _, item_code, item_tag, purity, net_weight, gross_weight, customers = row
+        writer.writerow([item_code, item_tag, purity, net_weight, gross_weight, customers or ""])
+    return output.getvalue()
