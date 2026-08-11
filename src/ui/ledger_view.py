@@ -50,20 +50,18 @@ def build_ledger_view(page: ft.Page):
     page.services.append(export_picker)
 
     async def on_export_click(e):
-        save_path = await export_picker.save_file(
-            dialog_title="Export stock ledger",
-            file_name="stock_ledger_export.csv",
-            file_type=ft.FilePickerFileType.CUSTOM,
-            allowed_extensions=["csv"],
-        )
-        if not save_path:
-            return  # user cancelled
-
+        csv_text = export_ledger_csv()
         try:
-            csv_text = export_ledger_csv()
-            with open(save_path, "w", encoding="utf-8", newline="") as f:
-                f.write(csv_text)
-            snack(page, f"Exported to {save_path}")
+            result = await export_picker.save_file(
+                dialog_title="Export stock ledger",
+                file_name="stock_ledger_export.csv",
+                file_type=ft.FilePickerFileType.CUSTOM,
+                allowed_extensions=["csv"],
+                src_bytes=csv_text.encode("utf-8"),
+            )
+            if not result:
+                return  # user cancelled
+            snack(page, "Exported stock_ledger_export.csv")
         except Exception as ex:
             snack(page, f"Export failed: {ex}", accent=CLAY)
         page.update()
