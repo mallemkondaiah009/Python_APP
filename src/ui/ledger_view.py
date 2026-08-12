@@ -21,8 +21,31 @@ def build_ledger_view(page: ft.Page):
     # or reopening the app) ----------
     session_links = {}  # item_code -> set(customer_id)
 
-    customer_options = fetch_customers(limit=200)
-    customer_lookup = {cid: (code, name) for cid, code, name, number in customer_options}
+    customer_lookup = {}
+    dropdown_container = ft.Container(expand=1)
+
+    def refresh_customer_list():
+        """Reload customers from DB and update dropdown + lookup."""
+        customer_lookup.clear()
+        options = []
+        for cid, code, name, number in fetch_customers(limit=200):
+            customer_lookup[cid] = (code, name)
+            options.append(ft.DropdownOption(key=str(cid), text=name))
+
+        dropdown_container.content = ft.Dropdown(
+            hint_text="Customer",
+            options=options,
+            border_color=BRASS_DIM,
+            focused_border_color=BRASS,
+            color=IVORY,
+            bgcolor=SURFACE,
+            border_radius=RADIUS_MD,
+            text_size=13,
+            content_padding=ft.Padding(ROW_H_PAD, 14, ROW_H_PAD, 14),
+            expand=True,
+        )
+
+    refresh_customer_list()  # initial load
 
     # ---------- table ----------
     table_header = table_header_row(
@@ -59,19 +82,6 @@ def build_ledger_view(page: ft.Page):
         page.update()
 
     # ---------- assign by item code ----------
-    customer_dropdown = ft.Dropdown(
-        hint_text="Customer",
-        options=[ft.DropdownOption(key=str(cid), text=name) for cid, (code, name) in customer_lookup.items()],
-        border_color=BRASS_DIM,
-        focused_border_color=BRASS,
-        color=IVORY,
-        bgcolor=SURFACE,
-        border_radius=RADIUS_MD,
-        text_size=13,
-        content_padding=ft.Padding(ROW_H_PAD, 14, ROW_H_PAD, 14),
-        expand=1,
-    )
-
     codes_field = app_text_field(label=None, hint="item code(s), e.g. AB123, AB124")
     codes_field.expand = 2
 
@@ -84,7 +94,8 @@ def build_ledger_view(page: ft.Page):
         render_rows(fetch_by_item_codes(combined))
 
     def on_assign_click(e):
-        customer_key = customer_dropdown.value
+        dropdown_ctrl = dropdown_container.content
+        customer_key = dropdown_ctrl.value if dropdown_ctrl else None
         codes_text = (codes_field.value or "").strip()
 
         if not customer_key:
@@ -123,7 +134,7 @@ def build_ledger_view(page: ft.Page):
 
     assign_row = ft.Row(
         [
-            customer_dropdown,
+            dropdown_container,
             codes_field,
             submit_arrow_button(on_click=on_assign_click, tooltip="Assign to customer"),
         ],
@@ -287,7 +298,7 @@ def build_ledger_view(page: ft.Page):
         empty_container.visible = False
         page.update()
 
-    return ft.Container(
+    view = ft.Container(
         content=ft.Column(
             [
                 eyebrow_text("Assign Stock To Customer"),
@@ -308,3 +319,7 @@ def build_ledger_view(page: ft.Page):
         bgcolor=INK,
         expand=True,
     )
+
+    # Attach refresh hook so main.py can call it on tab switch
+    view.refresh_customers = refresh_customer_list
+    return view

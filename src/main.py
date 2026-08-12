@@ -38,7 +38,11 @@ def main(page: ft.Page):
         return cached_views[name]
 
     def show_ledger():
-        content_area.content = get_view("ledger", build_ledger_view)
+        view = get_view("ledger", build_ledger_view)
+        # Refresh customer dropdown to pick up newly added customers
+        if hasattr(view, "refresh_customers"):
+            view.refresh_customers()
+        content_area.content = view
         page.update()
 
     def show_upload():

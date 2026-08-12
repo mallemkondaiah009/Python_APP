@@ -20,6 +20,13 @@ env/
 build/
 storage/
 
+# Database files (runtime-generated)
+*.db
+
+# Build artifacts
+build_log.txt
+sig.txt
+
 # IDE
 .idea/
 .vscode/
