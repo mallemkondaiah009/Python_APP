@@ -37,13 +37,12 @@ def get_db_path():
         print(f"DB_PATH IN USE (FLET_APP_STORAGE_DATA): {_db_path_cache}")
         return _db_path_cache
 
-    # fallback: FLET_APP_STORAGE_DATA isn't set (e.g. running `python main.py`
-    # directly instead of `flet run`/a packaged build) -- resolve relative to
-    # src/, not wherever the process was launched from
     _db_path_cache = os.path.abspath(os.path.join(BASE_DIR, "..", "data.db"))
     print(f"DB_PATH IN USE (fallback): {_db_path_cache}")
     return _db_path_cache
 
+
+# ---------- stock ledger ----------
 
 def store_csv_in_sqlite(csv_text):
     reader = csv.DictReader(io.StringIO(csv_text))
@@ -111,52 +110,108 @@ def search_stock(query, limit=50):
     return rows
 
 
+def fetch_by_item_codes(item_codes):
+    """Returns full stock rows for the given item_codes."""
+    if not item_codes:
+        return []
+    conn = sqlite3.connect(get_db_path())
+    cur = conn.cursor()
+    placeholders = ",".join("?" for _ in item_codes)
+    try:
+        cur.execute(f"SELECT * FROM {TABLE_NAME} WHERE item_code IN ({placeholders})", item_codes)
+        rows = cur.fetchall()
+    except sqlite3.OperationalError:
+        rows = []
+    conn.close()
+    return rows
+
+
+# ---------- customers ----------
+
 def init_customer_table():
     conn = sqlite3.connect(get_db_path())
     conn.execute(f"""
         CREATE TABLE IF NOT EXISTS {CUSTOMER_TABLE} (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            customer_code TEXT NOT NULL,
+            customer_code TEXT NOT NULL UNIQUE,
             customer_name TEXT NOT NULL,
-            customer_number TEXT
+            customer_number TEXT UNIQUE
         )
     """)
+    # Add unique indexes for existing tables that lack them
+    try:
+        conn.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS idx_customer_code ON {CUSTOMER_TABLE} (customer_code)")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        conn.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS idx_customer_number ON {CUSTOMER_TABLE} (customer_number)")
+    except sqlite3.OperationalError:
+        pass
     conn.commit()
     conn.close()
+
+
+def _check_customer_duplicates(conn, customer_code, customer_number, exclude_id=None):
+    """Raise ValueError if customer_code or customer_number already exists."""
+    exclude_clause = "AND id != ?" if exclude_id else ""
+    params_code = [customer_code] + ([exclude_id] if exclude_id else [])
+    params_number = [customer_number] + ([exclude_id] if exclude_id else [])
+
+    row = conn.execute(
+        f"SELECT id FROM {CUSTOMER_TABLE} WHERE customer_code = ? {exclude_clause}",
+        params_code,
+    ).fetchone()
+    if row:
+        raise ValueError(f"Customer Code '{customer_code}' already exists.")
+
+    if customer_number:  # only check when a number is provided
+        row = conn.execute(
+            f"SELECT id FROM {CUSTOMER_TABLE} WHERE customer_number = ? {exclude_clause}",
+            params_number,
+        ).fetchone()
+        if row:
+            raise ValueError(f"Customer Number '{customer_number}' already exists.")
 
 
 def store_customer(customer_code, customer_name, customer_number):
     init_customer_table()
+    code = customer_code.strip()
+    number = (customer_number or "").strip()
     conn = sqlite3.connect(get_db_path())
-    conn.execute(
-        f"INSERT INTO {CUSTOMER_TABLE} (customer_code, customer_name, customer_number) VALUES (?, ?, ?)",
-        (customer_code.strip(), customer_name.strip(), (customer_number or "").strip()),
-    )
-    conn.commit()
-    conn.close()
+    try:
+        _check_customer_duplicates(conn, code, number)
+        conn.execute(
+            f"INSERT INTO {CUSTOMER_TABLE} (customer_code, customer_name, customer_number) VALUES (?, ?, ?)",
+            (code, customer_name.strip(), number),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def update_customer(customer_id, customer_code, customer_name, customer_number):
-    """Update an existing customer row by id."""
     init_customer_table()
+    code = customer_code.strip()
+    number = (customer_number or "").strip()
     conn = sqlite3.connect(get_db_path())
-    conn.execute(
-        f"""UPDATE {CUSTOMER_TABLE}
-            SET customer_code = ?, customer_name = ?, customer_number = ?
-            WHERE id = ?""",
-        (customer_code.strip(), customer_name.strip(), (customer_number or "").strip(), customer_id),
-    )
-    conn.commit()
-    conn.close()
+    try:
+        _check_customer_duplicates(conn, code, number, exclude_id=customer_id)
+        conn.execute(
+            f"""UPDATE {CUSTOMER_TABLE}
+                SET customer_code = ?, customer_name = ?, customer_number = ?
+                WHERE id = ?""",
+            (code, customer_name.strip(), number, customer_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def delete_customer(customer_id):
-    """Delete a customer row by id, and any stock links pointing to it."""
+    """Delete a customer row by id."""
     init_customer_table()
-    init_link_table()
     conn = sqlite3.connect(get_db_path())
     conn.execute(f"DELETE FROM {CUSTOMER_TABLE} WHERE id = ?", (customer_id,))
-    conn.execute(f"DELETE FROM {LINK_TABLE} WHERE customer_id = ?", (customer_id,))
     conn.commit()
     conn.close()
 
@@ -173,90 +228,3 @@ def fetch_customers(limit=100):
     rows = cur.fetchall()
     conn.close()
     return rows
-
-
-LINK_TABLE = "stock_customer_links"
-
-
-def init_link_table():
-    conn = sqlite3.connect(get_db_path())
-    conn.execute(f"""
-        CREATE TABLE IF NOT EXISTS {LINK_TABLE} (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            item_code TEXT NOT NULL,
-            customer_id INTEGER NOT NULL,
-            UNIQUE(item_code, customer_id)
-        )
-    """)
-    conn.commit()
-    conn.close()
-
-
-def link_customer_to_item(item_code, customer_id):
-    init_link_table()
-    conn = sqlite3.connect(get_db_path())
-    conn.execute(
-        f"INSERT OR IGNORE INTO {LINK_TABLE} (item_code, customer_id) VALUES (?, ?)",
-        (item_code, customer_id),
-    )
-    conn.commit()
-    conn.close()
-
-
-def unlink_customer_from_item(item_code, customer_id):
-    init_link_table()
-    conn = sqlite3.connect(get_db_path())
-    conn.execute(
-        f"DELETE FROM {LINK_TABLE} WHERE item_code = ? AND customer_id = ?",
-        (item_code, customer_id),
-    )
-    conn.commit()
-    conn.close()
-
-
-def get_linked_customers(item_code):
-    """Returns [(customer_id, customer_code, customer_name), ...] linked to this item."""
-    init_customer_table()
-    init_link_table()
-    conn = sqlite3.connect(get_db_path())
-    cur = conn.cursor()
-    cur.execute(f"""
-        SELECT c.id, c.customer_code, c.customer_name
-        FROM {LINK_TABLE} l
-        JOIN {CUSTOMER_TABLE} c ON c.id = l.customer_id
-        WHERE l.item_code = ?
-        ORDER BY c.customer_name
-    """, (item_code,))
-    rows = cur.fetchall()
-    conn.close()
-    return rows
-
-
-def export_ledger_csv():
-    """Returns CSV text: stock columns + a linked_customers column (comma-joined names)."""
-    init_link_table()
-    init_customer_table()
-    conn = sqlite3.connect(get_db_path())
-    cur = conn.cursor()
-    try:
-        cur.execute(f"""
-            SELECT u.rowid, u.item_code, u.item_tag, u.purity, u.net_weight, u.gross_weight,
-                   GROUP_CONCAT(c.customer_name, ', ') AS customers
-            FROM {TABLE_NAME} u
-            LEFT JOIN {LINK_TABLE} l ON l.item_code = u.item_code
-            LEFT JOIN {CUSTOMER_TABLE} c ON c.id = l.customer_id
-            GROUP BY u.rowid
-            ORDER BY u.rowid
-        """)
-        rows = cur.fetchall()
-    except sqlite3.OperationalError:
-        rows = []
-    conn.close()
-
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(COLUMNS + ["linked_customers"])
-    for row in rows:
-        _, item_code, item_tag, purity, net_weight, gross_weight, customers = row
-        writer.writerow([item_code, item_tag, purity, net_weight, gross_weight, customers or ""])
-    return output.getvalue()

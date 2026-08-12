@@ -2,31 +2,26 @@ import flet as ft
 from db.storage import store_customer, update_customer, delete_customer, fetch_customers
 from ui.theme import (
     INK, SURFACE, SURFACE_ALT, BRASS, BRASS_DIM, IVORY, SLATE, CLAY,
-    SPACE_SM, SPACE_MD, SPACE_LG, SPACE_XL, RADIUS_LG,
+    SPACE_SM, SPACE_MD, SPACE_LG, SPACE_XL, SPACE_XXL, RADIUS_LG, RADIUS_MD,
+    ROW_H_PAD, PAGE_H_PAD,
     eyebrow_text, heading_text, subheading_text, header_cell_text, data_cell_text,
     primary_button, danger_button, icon_action_button, app_text_field,
-    table_shell, row_bg, empty_state, snack,
+    table_shell, table_header_row, table_data_row, empty_state, snack,
 )
 
 CUST_COLUMNS = ["customer_code", "customer_name", "customer_number"]
 COL_WIDTH = 140
-ACTION_COL_WIDTH = 84
-ROW_END_SPACER = 12
-TABLE_WIDTH = COL_WIDTH * len(CUST_COLUMNS) + ACTION_COL_WIDTH + ROW_END_SPACER
+ACTION_COL_WIDTH = 100
+TABLE_WIDTH = COL_WIDTH * len(CUST_COLUMNS) + ACTION_COL_WIDTH
 
 
 def build_customers_view(page: ft.Page):
-    table_header = ft.Container(
-        content=ft.Row(
-            [ft.Container(header_cell_text(c), width=COL_WIDTH) for c in CUST_COLUMNS]
-            + [ft.Container(width=ACTION_COL_WIDTH)]
-            + [ft.Container(width=ROW_END_SPACER)],
-            spacing=0,
-        ),
-        padding=ft.Padding(SPACE_LG, SPACE_MD, 0, SPACE_MD),
-        bgcolor=SURFACE_ALT,
-        width=TABLE_WIDTH,
+    # ---------- table header ----------
+    table_header = table_header_row(
+        [ft.Container(header_cell_text(c), width=COL_WIDTH) for c in CUST_COLUMNS]
+        + [ft.Container(width=ACTION_COL_WIDTH)],
     )
+    table_header.width = TABLE_WIDTH
 
     customer_rows = ft.Column(spacing=0, width=TABLE_WIDTH)
     customers_table_container = table_shell(table_header, customer_rows, TABLE_WIDTH)
@@ -90,9 +85,13 @@ def build_customers_view(page: ft.Page):
         shape=ft.RoundedRectangleBorder(radius=RADIUS_LG),
         title=ft.Column([dialog_title, dialog_subtitle], spacing=4, tight=True),
         content=ft.Container(
-            content=ft.Column([code_field, name_field, number_field, error_text], spacing=SPACE_LG, tight=True),
+            content=ft.Column(
+                [code_field, name_field, number_field, error_text],
+                spacing=SPACE_LG,
+                tight=True,
+            ),
             width=320,
-            padding=ft.Padding(0, SPACE_SM, 0, 0),
+            padding=ft.Padding(0, SPACE_MD, 0, 0),
         ),
         actions=[
             ft.TextButton(
@@ -171,37 +170,31 @@ def build_customers_view(page: ft.Page):
         for i, row in enumerate(rows):
             customer_id, code, name, number = row
             row_controls.append(
-                ft.Container(
-                    content=ft.Row(
-                        [ft.Container(data_cell_text(v), width=COL_WIDTH) for v in (code, name, number)]
-                        + [
-                            ft.Container(
-                                content=ft.Row(
-                                    [
-                                        icon_action_button(
-                                            ft.Icons.EDIT_OUTLINED, BRASS, "Edit",
-                                            lambda e, cid=customer_id, c=code, n=name, num=number:
-                                                open_edit_dialog(cid, c, n, num),
-                                        ),
-                                        icon_action_button(
-                                            ft.Icons.DELETE_OUTLINE, CLAY, "Delete",
-                                            lambda e, cid=customer_id, n=name: open_delete_dialog(cid, n),
-                                        ),
-                                    ],
-                                    spacing=4,
-                                    alignment=ft.MainAxisAlignment.CENTER,
-                                    tight=True,
-                                ),
-                                width=ACTION_COL_WIDTH,
-                                alignment=ft.Alignment.CENTER,
-                            )
-                        ]
-                        + [ft.Container(width=ROW_END_SPACER)],
-                        spacing=0,
-                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                    ),
-                    padding=ft.Padding(SPACE_LG, SPACE_SM, 0, SPACE_SM),
-                    bgcolor=row_bg(i),
+                table_data_row(
+                    [ft.Container(data_cell_text(v), width=COL_WIDTH) for v in (code, name, number)]
+                    + [
+                        ft.Container(
+                            content=ft.Row(
+                                [
+                                    icon_action_button(
+                                        ft.Icons.EDIT_OUTLINED, BRASS, "Edit",
+                                        lambda e, cid=customer_id, c=code, n=name, num=number:
+                                            open_edit_dialog(cid, c, n, num),
+                                    ),
+                                    icon_action_button(
+                                        ft.Icons.DELETE_OUTLINE, CLAY, "Delete",
+                                        lambda e, cid=customer_id, n=name: open_delete_dialog(cid, n),
+                                    ),
+                                ],
+                                spacing=4,
+                                alignment=ft.MainAxisAlignment.CENTER,
+                                tight=True,
+                            ),
+                            width=ACTION_COL_WIDTH,
+                            alignment=ft.Alignment.CENTER,
+                        )
+                    ],
+                    index=i,
                 )
             )
 
@@ -223,10 +216,10 @@ def build_customers_view(page: ft.Page):
                 customers_table_container,
                 empty_container,
             ],
-            spacing=SPACE_LG,
+            spacing=SPACE_SM,
             scroll=ft.ScrollMode.AUTO,
         ),
-        padding=SPACE_XL,
+        padding=PAGE_H_PAD,
         bgcolor=INK,
         expand=True,
     )

@@ -3,8 +3,9 @@ from db.storage import store_csv_in_sqlite, fetch_preview, COLUMNS
 from ui.theme import (
     INK, SURFACE, SURFACE_ALT, BRASS, BRASS_DIM, IVORY, SLATE, CLAY, EMERALD,
     SPACE_SM, SPACE_MD, SPACE_LG, SPACE_XL, SPACE_XXL, RADIUS_LG,
+    ROW_H_PAD, PAGE_H_PAD,
     eyebrow_text, heading_text, subheading_text, header_cell_text, data_cell_text,
-    primary_button, app_card, table_shell, row_bg,
+    primary_button, app_card, table_shell, table_header_row, table_data_row,
 )
 
 COL_WIDTH = 110
@@ -26,12 +27,10 @@ def build_upload_view(page: ft.Page):
         status_sub.value = sub
 
     # --- preview table (shown after a successful upload) ---
-    table_header = ft.Container(
-        content=ft.Row([ft.Container(header_cell_text(c), width=COL_WIDTH) for c in COLUMNS], spacing=0),
-        padding=ft.Padding(SPACE_LG, SPACE_MD, SPACE_LG, SPACE_MD),
-        bgcolor=SURFACE_ALT,
-        width=TABLE_WIDTH,
+    table_header = table_header_row(
+        [ft.Container(header_cell_text(c), width=COL_WIDTH) for c in COLUMNS],
     )
+    table_header.width = TABLE_WIDTH
 
     preview_rows = ft.Column(spacing=0, width=TABLE_WIDTH)
     preview_table = table_shell(table_header, preview_rows, TABLE_WIDTH)
@@ -47,13 +46,9 @@ def build_upload_view(page: ft.Page):
     def show_uploaded_preview(row_count):
         rows = fetch_preview(limit=row_count)
         preview_rows.controls = [
-            ft.Container(
-                content=ft.Row(
-                    [ft.Container(data_cell_text(v), width=COL_WIDTH) for v in row],
-                    spacing=0,
-                ),
-                padding=ft.Padding(SPACE_LG, SPACE_MD, SPACE_LG, SPACE_MD),
-                bgcolor=row_bg(i),
+            table_data_row(
+                [ft.Container(data_cell_text(v), width=COL_WIDTH) for v in row],
+                index=i,
             )
             for i, row in enumerate(rows)
         ]
@@ -125,7 +120,7 @@ def build_upload_view(page: ft.Page):
             spacing=SPACE_LG,
             scroll=ft.ScrollMode.AUTO,
         ),
-        padding=SPACE_XL,
+        padding=PAGE_H_PAD,
         bgcolor=INK,
         expand=True,
     )

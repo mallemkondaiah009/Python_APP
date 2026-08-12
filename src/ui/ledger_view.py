@@ -1,72 +1,179 @@
 import flet as ft
-from db.storage import (
-    fetch_preview,
-    search_stock,
-    COLUMNS,
-    fetch_customers,
-    get_linked_customers,
-    link_customer_to_item,
-    unlink_customer_from_item,
-    export_ledger_csv,
-)
+from db.storage import fetch_by_item_codes, COLUMNS, fetch_customers
 from ui.theme import (
     INK, SURFACE, SURFACE_ALT, BRASS, BRASS_DIM, IVORY, SLATE, CLAY,
     SPACE_SM, SPACE_MD, SPACE_LG, SPACE_XL, RADIUS_MD, RADIUS_LG,
+    ROW_H_PAD, PAGE_H_PAD,
     eyebrow_text, heading_text, subheading_text, header_cell_text, data_cell_text,
-    primary_button, icon_action_button, app_text_field,
-    table_shell, row_bg, empty_state, snack,
+    primary_button, icon_action_button, submit_arrow_button, ghost_button, app_text_field,
+    table_shell, table_header_row, table_data_row, empty_state, snack,
 )
 
 COL_WIDTH = 110
 CUSTOMERS_COL_WIDTH = 130
 ACTION_COL_WIDTH = 56
-ROW_END_SPACER = 12
-TABLE_WIDTH = COL_WIDTH * len(COLUMNS) + CUSTOMERS_COL_WIDTH + ACTION_COL_WIDTH + ROW_END_SPACER
+TABLE_WIDTH = COL_WIDTH * len(COLUMNS) + CUSTOMERS_COL_WIDTH + ACTION_COL_WIDTH
 
 
 def build_ledger_view(page: ft.Page):
-    table_header = ft.Container(
-        content=ft.Row(
-            [ft.Container(header_cell_text(c), width=COL_WIDTH) for c in COLUMNS]
-            + [ft.Container(header_cell_text("Customers"), width=CUSTOMERS_COL_WIDTH)]
-            + [ft.Container(width=ACTION_COL_WIDTH)]
-            + [ft.Container(width=ROW_END_SPACER)],
-            spacing=0,
-        ),
-        padding=ft.Padding(SPACE_LG, SPACE_MD, 0, SPACE_MD),
-        bgcolor=SURFACE_ALT,
-        width=TABLE_WIDTH,
+    # ---------- session-only assignment state (never written to the database;
+    # resets every time this view is (re)built, i.e. on navigating away/back
+    # or reopening the app) ----------
+    session_links = {}  # item_code -> set(customer_id)
+
+    customer_options = fetch_customers(limit=200)
+    customer_lookup = {cid: (code, name) for cid, code, name, number in customer_options}
+
+    # ---------- table ----------
+    table_header = table_header_row(
+        [ft.Container(header_cell_text(c), width=COL_WIDTH) for c in COLUMNS]
+        + [ft.Container(header_cell_text("Customers"), width=CUSTOMERS_COL_WIDTH)]
+        + [ft.Container(width=ACTION_COL_WIDTH)],
     )
+    table_header.width = TABLE_WIDTH
 
     ledger_rows = ft.Column(spacing=0, width=TABLE_WIDTH)
     table_container = table_shell(table_header, ledger_rows, TABLE_WIDTH)
     table_container.visible = False
 
-    empty_container = empty_state("No stock rows found. Upload a CSV to get started.")
-    empty_container.visible = False
+    empty_container = empty_state("Assign stock to a customer below to see it here.")
+    empty_container.visible = True
 
-    # ---------- export ----------
+    current_item_codes = {"value": []}  # accumulated across assign actions, this session only
+
+    section_label = eyebrow_text("Assigned Items")
+    clear_btn = ghost_button("Clear", on_click=lambda e: clear_assigned())
+    clear_btn.visible = False
+
+    section_header_row = ft.Row(
+        [section_label, ft.Container(expand=True), clear_btn],
+        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+    )
+
+    def clear_assigned():
+        current_item_codes["value"] = []
+        section_label.value = "ASSIGNED ITEMS"
+        clear_btn.visible = False
+        export_btn.disabled = True
+        render_rows([])
+        page.update()
+
+    # ---------- assign by item code ----------
+    customer_dropdown = ft.Dropdown(
+        hint_text="Customer",
+        options=[ft.DropdownOption(key=str(cid), text=name) for cid, (code, name) in customer_lookup.items()],
+        border_color=BRASS_DIM,
+        focused_border_color=BRASS,
+        color=IVORY,
+        bgcolor=SURFACE,
+        border_radius=RADIUS_MD,
+        text_size=13,
+        content_padding=ft.Padding(ROW_H_PAD, 14, ROW_H_PAD, 14),
+        expand=1,
+    )
+
+    codes_field = app_text_field(label=None, hint="item code(s), e.g. AB123, AB124")
+    codes_field.expand = 2
+
+    def render_assigned(new_item_codes):
+        combined = current_item_codes["value"] + [
+            c for c in new_item_codes if c not in current_item_codes["value"]
+        ]
+        current_item_codes["value"] = combined
+        clear_btn.visible = True
+        render_rows(fetch_by_item_codes(combined))
+
+    def on_assign_click(e):
+        customer_key = customer_dropdown.value
+        codes_text = (codes_field.value or "").strip()
+
+        if not customer_key:
+            snack(page, "Select a customer first", accent=CLAY)
+            page.update()
+            return
+        if not codes_text:
+            snack(page, "Enter at least one item code", accent=CLAY)
+            page.update()
+            return
+
+        customer_id = int(customer_key)
+        raw_codes = [c.strip() for c in codes_text.replace("\n", ",").split(",") if c.strip()]
+
+        matched_rows = fetch_by_item_codes(raw_codes)
+        matched_codes = {row[0] for row in matched_rows}
+        not_found = [c for c in raw_codes if c not in matched_codes]
+
+        for code in matched_codes:
+            session_links.setdefault(code, set()).add(customer_id)
+
+        codes_field.value = ""
+
+        if matched_codes:
+            render_assigned(list(matched_codes))
+            section_label.value = f"ASSIGNED ITEMS · {len(current_item_codes['value'])} total"
+            export_btn.disabled = False
+
+        if matched_codes and not not_found:
+            snack(page, f"Assigned {len(matched_codes)} item(s)")
+        elif matched_codes and not_found:
+            snack(page, f"Assigned {len(matched_codes)}; not found: {', '.join(not_found)}", accent=CLAY)
+        else:
+            snack(page, f"No matching item codes found: {', '.join(not_found)}", accent=CLAY)
+        page.update()
+
+    assign_row = ft.Row(
+        [
+            customer_dropdown,
+            codes_field,
+            submit_arrow_button(on_click=on_assign_click, tooltip="Assign to customer"),
+        ],
+        spacing=SPACE_SM,
+        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+    )
+
+    # ---------- export (built entirely from in-memory session_links, no DB join) ----------
     export_picker = ft.FilePicker()
     page.services.append(export_picker)
 
+    def build_export_csv():
+        import csv
+        import io
+
+        rows = fetch_by_item_codes(current_item_codes["value"])
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(COLUMNS + ["linked_customers"])
+        for row in rows:
+            item_code = row[0]
+            ids = session_links.get(item_code, set())
+            names = [customer_lookup[cid][1] for cid in ids if cid in customer_lookup]
+            writer.writerow(list(row) + [", ".join(names)])
+        return output.getvalue()
+
     async def on_export_click(e):
-        csv_text = export_ledger_csv()
+        if not current_item_codes["value"]:
+            return
+
+        csv_text = build_export_csv()
         try:
             result = await export_picker.save_file(
-                dialog_title="Export stock ledger",
-                file_name="stock_ledger_export.csv",
+                dialog_title="Export assigned stock",
+                file_name="assigned_stock_export.csv",
                 file_type=ft.FilePickerFileType.CUSTOM,
                 allowed_extensions=["csv"],
                 src_bytes=csv_text.encode("utf-8"),
             )
             if not result:
-                return  # user cancelled
-            snack(page, "Exported stock_ledger_export.csv")
+                return
+            snack(page, "Exported assigned_stock_export.csv")
         except Exception as ex:
             snack(page, f"Export failed: {ex}", accent=CLAY)
         page.update()
 
-    # ---------- link customers dialog ----------
+    export_btn = primary_button("Export CSV", on_click=on_export_click, icon=ft.Icons.FILE_DOWNLOAD_OUTLINED, expand=True)
+    export_btn.disabled = True
+
+    # ---------- per-row link dialog (session-only) ----------
     link_item_code = {"value": None}
     link_checkboxes_column = ft.Column(spacing=SPACE_SM, scroll=ft.ScrollMode.AUTO, height=260)
     link_dialog_title = heading_text("Link Customers", size=18)
@@ -74,13 +181,6 @@ def build_ledger_view(page: ft.Page):
 
     def close_link_dialog(e=None):
         page.pop_dialog()
-
-    def refresh_current_view():
-        query = (search_field.value or "").strip()
-        if query:
-            render_rows(search_stock(query, limit=100))
-        else:
-            render_rows(fetch_preview(limit=100))
 
     def save_links(e):
         item_code = link_item_code["value"]
@@ -92,16 +192,14 @@ def build_ledger_view(page: ft.Page):
             cb.data for cb in link_checkboxes_column.controls
             if isinstance(cb, ft.Checkbox) and cb.value
         }
-        currently_linked = {cid for cid, _, _ in get_linked_customers(item_code)}
-
-        for cid in selected_ids - currently_linked:
-            link_customer_to_item(item_code, cid)
-        for cid in currently_linked - selected_ids:
-            unlink_customer_from_item(item_code, cid)
+        if selected_ids:
+            session_links[item_code] = selected_ids
+        elif item_code in session_links:
+            del session_links[item_code]
 
         page.pop_dialog()
         page.update()
-        refresh_current_view()
+        render_rows(fetch_by_item_codes(current_item_codes["value"]))
         snack(page, f"Updated links for {item_code}")
         page.update()
 
@@ -125,10 +223,9 @@ def build_ledger_view(page: ft.Page):
         link_item_code["value"] = item_code
         link_dialog_sub.value = f"Item: {item_code}"
 
-        all_customers = fetch_customers(limit=200)
-        linked_ids = {cid for cid, _, _ in get_linked_customers(item_code)}
+        linked_ids = session_links.get(item_code, set())
 
-        if not all_customers:
+        if not customer_lookup:
             link_checkboxes_column.controls = [
                 ft.Text("No customers yet — add one in the Customers tab first.", size=12, color=SLATE)
             ]
@@ -141,7 +238,7 @@ def build_ledger_view(page: ft.Page):
                     label_style=ft.TextStyle(color=IVORY, size=13),
                     active_color=BRASS,
                 )
-                for cid, code, name, number in all_customers
+                for cid, (code, name) in customer_lookup.items()
             ]
         page.show_dialog(link_dialog)
 
@@ -156,38 +253,33 @@ def build_ledger_view(page: ft.Page):
         row_controls = []
         for i, row in enumerate(rows):
             item_code = row[0]
-            linked = get_linked_customers(item_code)
-            if not linked:
+            linked_ids = session_links.get(item_code, set())
+            names = [customer_lookup[cid][1] for cid in linked_ids if cid in customer_lookup]
+            if not names:
                 linked_display = "—"
-            elif len(linked) == 1:
-                linked_display = linked[0][2]
+            elif len(names) == 1:
+                linked_display = names[0]
             else:
-                linked_display = f"{linked[0][2]} +{len(linked) - 1}"
+                linked_display = f"{names[0]} +{len(names) - 1}"
 
             row_controls.append(
-                ft.Container(
-                    content=ft.Row(
-                        [ft.Container(data_cell_text(v), width=COL_WIDTH) for v in row]
-                        + [ft.Container(
-                            data_cell_text(linked_display, muted=(linked_display == "—")),
-                            width=CUSTOMERS_COL_WIDTH,
-                        )]
-                        + [
-                            ft.Container(
-                                content=icon_action_button(
-                                    ft.Icons.LINK, BRASS, "Link customers",
-                                    lambda e, ic=item_code: open_link_dialog(ic),
-                                ),
-                                width=ACTION_COL_WIDTH,
-                                alignment=ft.Alignment.CENTER,
-                            )
-                        ]
-                        + [ft.Container(width=ROW_END_SPACER)],
-                        spacing=0,
-                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                    ),
-                    padding=ft.Padding(SPACE_LG, SPACE_SM, 0, SPACE_SM),
-                    bgcolor=row_bg(i),
+                table_data_row(
+                    [ft.Container(data_cell_text(v), width=COL_WIDTH) for v in row]
+                    + [ft.Container(
+                        data_cell_text(linked_display, muted=(linked_display == "—")),
+                        width=CUSTOMERS_COL_WIDTH,
+                    )]
+                    + [
+                        ft.Container(
+                            content=icon_action_button(
+                                ft.Icons.LINK, BRASS, "Link customers",
+                                lambda e, ic=item_code: open_link_dialog(ic),
+                            ),
+                            width=ACTION_COL_WIDTH,
+                            alignment=ft.Alignment.CENTER,
+                        )
+                    ],
+                    index=i,
                 )
             )
         ledger_rows.controls = row_controls
@@ -195,43 +287,24 @@ def build_ledger_view(page: ft.Page):
         empty_container.visible = False
         page.update()
 
-    def load_all():
-        render_rows(fetch_preview(limit=100))
-
-    def on_search_change(e):
-        query = (search_field.value or "").strip()
-        if not query:
-            load_all()
-            return
-        render_rows(search_stock(query, limit=100))
-
-    search_field = app_text_field(
-        label=None, hint="Search by item code or tag",
-        on_change=on_search_change, prefix_icon=ft.Icons.SEARCH,
-    )
-
-    export_btn = primary_button(
-        "Export CSV", on_click=on_export_click, icon=ft.Icons.FILE_DOWNLOAD_OUTLINED, expand=True,
-    )
-
-    load_all()  # show existing stock data immediately
-
     return ft.Container(
         content=ft.Column(
             [
-                search_field,
+                eyebrow_text("Assign Stock To Customer"),
                 ft.Container(height=SPACE_SM),
-                eyebrow_text("Ledger · All Records"),
+                assign_row,
+                ft.Container(height=SPACE_LG),
+                section_header_row,
                 ft.Container(height=SPACE_SM),
                 table_container,
                 empty_container,
                 ft.Container(height=SPACE_SM),
                 export_btn,
             ],
-            spacing=SPACE_LG,
+            spacing=SPACE_SM,
             scroll=ft.ScrollMode.AUTO,
         ),
-        padding=SPACE_XL,
+        padding=PAGE_H_PAD,
         bgcolor=INK,
         expand=True,
     )

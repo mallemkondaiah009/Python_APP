@@ -2,7 +2,7 @@ import flet as ft
 from ui.ledger_view import build_ledger_view
 from ui.upload_view import build_upload_view
 from ui.customer_view import build_customers_view
-from db.storage import init_customer_table, init_link_table 
+from db.storage import init_customer_table
 
 INK = "#14161C"
 SURFACE = "#1E212B"
@@ -13,8 +13,7 @@ SLATE = "#8B90A0"
 
 
 def main(page: ft.Page):
-    init_customer_table()   
-    init_link_table()       
+    init_customer_table()
 
     page.title = "Stock Uploader"
     page.theme_mode = ft.ThemeMode.DARK
@@ -29,16 +28,25 @@ def main(page: ft.Page):
 
     content_area = ft.Container(expand=True)
 
+    # Build each view once so in-session state (e.g. assigned stock links)
+    # survives tab navigation. Data resets only on app close or Clear.
+    cached_views = {}
+
+    def get_view(name, builder):
+        if name not in cached_views:
+            cached_views[name] = builder(page)
+        return cached_views[name]
+
     def show_ledger():
-        content_area.content = build_ledger_view(page)
+        content_area.content = get_view("ledger", build_ledger_view)
         page.update()
 
     def show_upload():
-        content_area.content = build_upload_view(page)
+        content_area.content = get_view("upload", build_upload_view)
         page.update()
 
     def show_customers():
-        content_area.content = build_customers_view(page)
+        content_area.content = get_view("customers", build_customers_view)
         page.update()
 
     async def go_ledger(e):
@@ -55,9 +63,10 @@ def main(page: ft.Page):
 
     def menu_item(icon, label, on_click):
         return ft.ListTile(
-            leading=ft.Icon(icon, color=BRASS),
-            title=ft.Text(label, color=IVORY, size=14),
+            leading=ft.Icon(icon, color=BRASS, size=20),
+            title=ft.Text(label, color=IVORY, size=14, weight=ft.FontWeight.W_500),
             on_click=on_click,
+            content_padding=ft.Padding(20, 0, 20, 0),
         )
 
     drawer = ft.NavigationDrawer(
@@ -74,9 +83,10 @@ def main(page: ft.Page):
                     ],
                     spacing=10,
                 ),
-                padding=20,
+                padding=ft.Padding(20, 24, 20, 20),
             ),
             ft.Divider(color=BRASS_DIM, height=1),
+            ft.Container(height=4),
             menu_item(ft.Icons.HOME_OUTLINED, "Stock Ledger", go_ledger),
             menu_item(ft.Icons.UPLOAD_FILE_OUTLINED, "Upload Data", go_upload),
             menu_item(ft.Icons.PEOPLE_OUTLINE, "Customers", go_customers),
@@ -88,11 +98,20 @@ def main(page: ft.Page):
     async def open_drawer(e):
         await page.show_drawer()
 
+    # AppBar with a subtle bottom accent line
     page.appbar = ft.AppBar(
-        leading=ft.IconButton(icon=ft.Icons.MENU, icon_color=BRASS, on_click=open_drawer),
+        leading=ft.IconButton(
+            icon=ft.Icons.MENU,
+            icon_color=BRASS,
+            icon_size=22,
+            on_click=open_drawer,
+            style=ft.ButtonStyle(
+                overlay_color=ft.Colors.with_opacity(0.06, IVORY),
+            ),
+        ),
         title=ft.Text(
-            "STOCK UPLOADER", size=18, weight=ft.FontWeight.W_600, color=BRASS,
-            style=ft.TextStyle(font_family="Playfair", letter_spacing=1),
+            "STOCK UPLOADER", size=17, weight=ft.FontWeight.W_600, color=BRASS,
+            style=ft.TextStyle(font_family="Playfair", letter_spacing=1.5),
         ),
         center_title=False,
         bgcolor=INK,
