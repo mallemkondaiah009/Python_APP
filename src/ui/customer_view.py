@@ -1,9 +1,8 @@
 import flet as ft
 from db.storage import store_customer, update_customer, delete_customer, fetch_customers
 from ui.theme import (
-    INK, SURFACE, SURFACE_ALT, BRASS, BRASS_DIM, IVORY, SLATE, CLAY,
-    SPACE_SM, SPACE_MD, SPACE_LG, SPACE_XL, SPACE_XXL, RADIUS_LG, RADIUS_MD,
-    ROW_H_PAD, PAGE_H_PAD,
+    INK, SURFACE, BRASS, IVORY, SLATE, CLAY,
+    SPACE_SM, SPACE_MD, SPACE_LG, RADIUS_LG, PAGE_H_PAD,
     eyebrow_text, heading_text, subheading_text, header_cell_text, data_cell_text,
     primary_button, danger_button, icon_action_button, app_text_field,
     table_shell, table_header_row, table_data_row, empty_state, snack,

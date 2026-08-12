@@ -1,8 +1,8 @@
 import flet as ft
 from db.storage import fetch_by_item_codes, COLUMNS, fetch_customers
 from ui.theme import (
-    INK, SURFACE, SURFACE_ALT, BRASS, BRASS_DIM, IVORY, SLATE, CLAY,
-    SPACE_SM, SPACE_MD, SPACE_LG, SPACE_XL, RADIUS_MD, RADIUS_LG,
+    INK, SURFACE, BRASS, BRASS_DIM, IVORY, SLATE, CLAY,
+    SPACE_SM, SPACE_LG, RADIUS_MD, RADIUS_LG,
     ROW_H_PAD, PAGE_H_PAD,
     eyebrow_text, heading_text, subheading_text, header_cell_text, data_cell_text,
     primary_button, icon_action_button, submit_arrow_button, ghost_button, app_text_field,

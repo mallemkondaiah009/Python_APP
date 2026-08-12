@@ -3,8 +3,6 @@ import io
 import os
 import sqlite3
 
-import flet as ft
-
 TABLE_NAME = "uploaded_data"
 CUSTOMER_TABLE = "customers"
 

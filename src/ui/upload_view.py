@@ -1,9 +1,9 @@
 import flet as ft
 from db.storage import store_csv_in_sqlite, fetch_preview, COLUMNS
 from ui.theme import (
-    INK, SURFACE, SURFACE_ALT, BRASS, BRASS_DIM, IVORY, SLATE, CLAY, EMERALD,
-    SPACE_SM, SPACE_MD, SPACE_LG, SPACE_XL, SPACE_XXL, RADIUS_LG,
-    ROW_H_PAD, PAGE_H_PAD,
+    INK, BRASS, SLATE, CLAY, EMERALD,
+    SPACE_SM, SPACE_MD, SPACE_LG, SPACE_XXL,
+    PAGE_H_PAD,
     eyebrow_text, heading_text, subheading_text, header_cell_text, data_cell_text,
     primary_button, app_card, table_shell, table_header_row, table_data_row,
 )
