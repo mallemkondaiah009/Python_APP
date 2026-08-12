@@ -1,14 +1,15 @@
 from db.storage import (
     fetch_by_item_codes, COLUMNS, fetch_customers,
     save_customer_assignments, update_item_assignments, fetch_assignments, clear_assignments,
+    fetch_customer_totals_summary, fetch_customer_purity_breakdown,
 )
 from ui.theme import (
     INK, SURFACE, BRASS, BRASS_DIM, IVORY, SLATE, CLAY,
-    SPACE_SM, SPACE_LG, RADIUS_MD, RADIUS_LG,
+    SPACE_XS, SPACE_SM, SPACE_MD, SPACE_LG, RADIUS_SM, RADIUS_MD, RADIUS_LG,
     ROW_H_PAD, PAGE_H_PAD,
     eyebrow_text, heading_text, subheading_text, header_cell_text, data_cell_text,
     primary_button, icon_action_button, submit_arrow_button, ghost_button, app_text_field,
-    table_shell, table_header_row, table_data_row, empty_state, snack,
+    app_card, table_shell, table_header_row, table_data_row, empty_state, snack,
 )
 
 import flet as ft
@@ -86,12 +87,12 @@ def build_ledger_view(page: ft.Page):
         page.update()
 
     # ---------- assign by item code ----------
-    codes_field = app_text_field(label=None, hint="item code(s), e.g. AB123, AB124")
+    codes_field = app_text_field(label=None, hint="item, e.g. RG-101, NK-103")
     codes_field.expand = 2
 
-    def render_assigned(new_item_codes):
+    def render_assigned(new_item_keys):
         combined = current_item_codes["value"] + [
-            c for c in new_item_codes if c not in current_item_codes["value"]
+            k for k in new_item_keys if k not in current_item_codes["value"]
         ]
         current_item_codes["value"] = combined
         clear_btn.visible = True
@@ -107,7 +108,7 @@ def build_ledger_view(page: ft.Page):
             page.update()
             return
         if not codes_text:
-            snack(page, "Enter at least one item code", accent=CLAY)
+            snack(page, "Enter at least one item (e.g. RG-101)", accent=CLAY)
             page.update()
             return
 
@@ -115,45 +116,49 @@ def build_ledger_view(page: ft.Page):
         raw_codes = [c.strip() for c in codes_text.replace("\n", ",").split(",") if c.strip()]
 
         matched_rows = fetch_by_item_codes(raw_codes)
-        matched_codes = [row[0] for row in matched_rows]
-        not_found = [c for c in raw_codes if c not in matched_codes]
+        matched_keys = [f"{r[0]}-{r[1]}" for r in matched_rows]
 
-        already_added = [c for c in matched_codes if customer_id in session_links.get(c, set())]
-        new_codes = [c for c in matched_codes if customer_id not in session_links.get(c, set())]
+        already_added = [r for r in matched_rows if customer_id in session_links.get(f"{r[0]}-{r[1]}", set())]
+        new_rows = [r for r in matched_rows if customer_id not in session_links.get(f"{r[0]}-{r[1]}", set())]
+        new_keys = [f"{r[0]}-{r[1]}" for r in new_rows]
 
-        if not new_codes and already_added:
+        if not new_rows and already_added:
             snack(page, "Item already added", accent=CLAY)
             page.update()
             return
 
-        for code in new_codes:
-            session_links.setdefault(code, set()).add(customer_id)
+        for r in new_rows:
+            key = f"{r[0]}-{r[1]}"
+            session_links.setdefault(key, set()).add(customer_id)
 
-        if new_codes:
-            save_customer_assignments(customer_id, new_codes)
-            render_assigned(new_codes)
+        if new_rows:
+            save_customer_assignments(customer_id, new_rows)
+            render_assigned(new_keys)
             section_label.value = f"ASSIGNED ITEMS · {len(current_item_codes['value'])} total"
             export_btn.disabled = False
             codes_field.value = ""
 
-        if new_codes and not not_found and not already_added:
-            snack(page, f"Assigned {len(new_codes)} item(s)")
-        elif new_codes and already_added:
-            snack(page, f"Assigned {len(new_codes)} item(s); Item already added", accent=CLAY)
-        elif new_codes and not_found:
-            snack(page, f"Assigned {len(new_codes)}; not found: {', '.join(not_found)}", accent=CLAY)
-        elif not_found:
-            snack(page, f"No matching item codes found: {', '.join(not_found)}", accent=CLAY)
+        if new_rows and not already_added:
+            snack(page, f"Assigned {len(new_rows)} item(s)")
+        elif new_rows and already_added:
+            snack(page, f"Assigned {len(new_rows)} item(s); Item already added", accent=CLAY)
+        elif not matched_rows:
+            snack(page, f"No matching item found for: {', '.join(raw_codes)}", accent=CLAY)
         page.update()
 
-    assign_row = ft.Row(
+    assign_row = ft.Column(
         [
             dropdown_container,
-            codes_field,
-            submit_arrow_button(on_click=on_assign_click, tooltip="Assign to customer"),
+            ft.Row(
+                [
+                    codes_field,
+                    submit_arrow_button(on_click=on_assign_click, tooltip="Assign to customer"),
+                ],
+                spacing=SPACE_SM,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
         ],
         spacing=SPACE_SM,
-        vertical_alignment=ft.CrossAxisAlignment.CENTER,
     )
 
     # ---------- export (built entirely from session_links, no DB join) ----------
@@ -169,8 +174,8 @@ def build_ledger_view(page: ft.Page):
         writer = csv.writer(output)
         writer.writerow(COLUMNS + ["linked_customers"])
         for row in rows:
-            item_code = row[0]
-            ids = session_links.get(item_code, set())
+            item_key = f"{row[0]}-{row[1]}"
+            ids = session_links.get(item_key, set())
             names = [customer_lookup[cid][1] for cid in ids if cid in customer_lookup]
             writer.writerow(list(row) + [", ".join(names)])
         return output.getvalue()
@@ -199,7 +204,7 @@ def build_ledger_view(page: ft.Page):
     export_btn.disabled = not bool(current_item_codes["value"])
 
     # ---------- per-row link dialog ----------
-    link_item_code = {"value": None}
+    link_item_key = {"value": None}
     link_checkboxes_column = ft.Column(spacing=SPACE_SM, scroll=ft.ScrollMode.AUTO, height=260)
     link_dialog_title = heading_text("Link Customers", size=18)
     link_dialog_sub = subheading_text("")
@@ -208,8 +213,8 @@ def build_ledger_view(page: ft.Page):
         page.pop_dialog()
 
     def save_links(e):
-        item_code = link_item_code["value"]
-        if not item_code:
+        item_key = link_item_key["value"]
+        if not item_key:
             page.pop_dialog()
             return
 
@@ -218,16 +223,19 @@ def build_ledger_view(page: ft.Page):
             if isinstance(cb, ft.Checkbox) and cb.value
         }
         if selected_ids:
-            session_links[item_code] = selected_ids
-        elif item_code in session_links:
-            del session_links[item_code]
+            session_links[item_key] = selected_ids
+        elif item_key in session_links:
+            del session_links[item_key]
 
-        update_item_assignments(item_code, selected_ids)
+        parts = item_key.split("-", 1)
+        item_no = parts[0]
+        tag = parts[1] if len(parts) > 1 else ""
+        update_item_assignments(item_no, tag, selected_ids)
 
         page.pop_dialog()
         page.update()
         render_rows(fetch_by_item_codes(current_item_codes["value"]))
-        snack(page, f"Updated links for {item_code}")
+        snack(page, f"Updated links for {item_key}")
         page.update()
 
     link_dialog = ft.AlertDialog(
@@ -246,11 +254,11 @@ def build_ledger_view(page: ft.Page):
         actions_alignment=ft.MainAxisAlignment.END,
     )
 
-    def open_link_dialog(item_code):
-        link_item_code["value"] = item_code
-        link_dialog_sub.value = f"Item: {item_code}"
+    def open_link_dialog(item_key):
+        link_item_key["value"] = item_key
+        link_dialog_sub.value = f"Item: {item_key}"
 
-        linked_ids = session_links.get(item_code, set())
+        linked_ids = session_links.get(item_key, set())
 
         if not customer_lookup:
             link_checkboxes_column.controls = [
@@ -269,18 +277,71 @@ def build_ledger_view(page: ft.Page):
             ]
         page.show_dialog(link_dialog)
 
+    # ---------- totals summary ----------
+    totals_cards_container = ft.Column(spacing=SPACE_SM)
+    totals_section = ft.Container(
+        content=ft.Column(
+            [
+                eyebrow_text("TOTALS SUMMARY"),
+                ft.Container(height=SPACE_SM),
+                totals_cards_container,
+            ],
+            spacing=0,
+        ),
+        visible=False,
+    )
+
+    def render_totals_summary():
+        summary_rows = fetch_customer_totals_summary()
+
+        if not summary_rows:
+            totals_section.visible = False
+            return
+
+        grand_items = sum(r["item_count"] for r in summary_rows)
+        grand_net = sum(r["total_net_weight"] for r in summary_rows)
+        grand_gross = sum(r["total_gross_weight"] for r in summary_rows)
+
+        grand_card = app_card(
+            content=ft.Column(
+                [
+                    ft.Row(
+                        [
+                            ft.Text("GRAND TOTAL", color=BRASS, weight=ft.FontWeight.BOLD, size=13.5),
+                            ft.Text(f"{grand_items} items total", color=SLATE, size=12),
+                        ],
+                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                    ),
+                    ft.Row(
+                        [
+                            ft.Text(f"Net Wt: {grand_net:.3f} g", color=IVORY, weight=ft.FontWeight.BOLD, size=13),
+                            ft.Text(f"Gross Wt: {grand_gross:.3f} g", color=IVORY, weight=ft.FontWeight.BOLD, size=13),
+                        ],
+                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                        wrap=True,
+                    ),
+                ],
+                spacing=SPACE_SM,
+            ),
+            padding=SPACE_MD,
+        )
+
+        totals_cards_container.controls = [grand_card]
+        totals_section.visible = True
+
     # ---------- table rendering ----------
     def render_rows(rows):
         if not rows:
             table_container.visible = False
             empty_container.visible = True
+            render_totals_summary()
             page.update()
             return
 
         row_controls = []
         for i, row in enumerate(rows):
-            item_code = row[0]
-            linked_ids = session_links.get(item_code, set())
+            item_key = f"{row[0]}-{row[1]}"
+            linked_ids = session_links.get(item_key, set())
             names = [customer_lookup[cid][1] for cid in linked_ids if cid in customer_lookup]
             if not names:
                 linked_display = "—"
@@ -300,7 +361,7 @@ def build_ledger_view(page: ft.Page):
                         ft.Container(
                             content=icon_action_button(
                                 ft.Icons.LINK, BRASS, "Link customers",
-                                lambda e, ic=item_code: open_link_dialog(ic),
+                                lambda e, ik=item_key: open_link_dialog(ik),
                             ),
                             width=ACTION_COL_WIDTH,
                             alignment=ft.Alignment.CENTER,
@@ -312,6 +373,45 @@ def build_ledger_view(page: ft.Page):
         ledger_rows.controls = row_controls
         table_container.visible = True
         empty_container.visible = False
+        render_totals_summary()
+        page.update()
+
+    def clear_assigned():
+        clear_assignments()
+        session_links.clear()
+        current_item_codes["value"] = []
+        section_label.value = "ASSIGNED ITEMS"
+        clear_btn.visible = False
+        export_btn.disabled = True
+        render_rows([])
+        render_totals_summary()
+        page.update()
+
+    def save_links(e):
+        item_key = link_item_key["value"]
+        if not item_key:
+            page.pop_dialog()
+            return
+
+        selected_ids = {
+            cb.data for cb in link_checkboxes_column.controls
+            if isinstance(cb, ft.Checkbox) and cb.value
+        }
+        if selected_ids:
+            session_links[item_key] = selected_ids
+        elif item_key in session_links:
+            del session_links[item_key]
+
+        parts = item_key.split("-", 1)
+        item_no = parts[0]
+        tag = parts[1] if len(parts) > 1 else ""
+        update_item_assignments(item_no, tag, selected_ids)
+
+        page.pop_dialog()
+        page.update()
+        render_rows(fetch_by_item_codes(current_item_codes["value"]))
+        render_totals_summary()
+        snack(page, f"Updated links for {item_key}")
         page.update()
 
     view = ft.Container(
@@ -325,6 +425,8 @@ def build_ledger_view(page: ft.Page):
                 ft.Container(height=SPACE_SM),
                 table_container,
                 empty_container,
+                ft.Container(height=SPACE_LG),
+                totals_section,
                 ft.Container(height=SPACE_SM),
                 export_btn,
             ],
@@ -340,11 +442,24 @@ def build_ledger_view(page: ft.Page):
     if current_item_codes["value"]:
         section_label.value = f"ASSIGNED ITEMS · {len(current_item_codes['value'])} total"
         render_rows(fetch_by_item_codes(current_item_codes["value"]))
+        render_totals_summary()
 
     def refresh_and_render():
+        nonlocal session_links
         refresh_customer_list()
+        session_links = fetch_assignments()
+        current_item_codes["value"] = list(session_links.keys())
         if current_item_codes["value"]:
+            clear_btn.visible = True
+            export_btn.disabled = False
+            section_label.value = f"ASSIGNED ITEMS · {len(current_item_codes['value'])} total"
             render_rows(fetch_by_item_codes(current_item_codes["value"]))
+        else:
+            clear_btn.visible = False
+            export_btn.disabled = True
+            section_label.value = "ASSIGNED ITEMS"
+            render_rows([])
+        render_totals_summary()
 
     # Attach refresh hook so main.py can call it on tab switch
     view.refresh_customers = refresh_and_render
