@@ -1,5 +1,7 @@
-import flet as ft
-from db.storage import fetch_by_item_codes, COLUMNS, fetch_customers
+from db.storage import (
+    fetch_by_item_codes, COLUMNS, fetch_customers,
+    save_customer_assignments, update_item_assignments, fetch_assignments, clear_assignments,
+)
 from ui.theme import (
     INK, SURFACE, BRASS, BRASS_DIM, IVORY, SLATE, CLAY,
     SPACE_SM, SPACE_LG, RADIUS_MD, RADIUS_LG,
@@ -9,6 +11,8 @@ from ui.theme import (
     table_shell, table_header_row, table_data_row, empty_state, snack,
 )
 
+import flet as ft
+
 COL_WIDTH = 110
 CUSTOMERS_COL_WIDTH = 130
 ACTION_COL_WIDTH = 56
@@ -16,10 +20,8 @@ TABLE_WIDTH = COL_WIDTH * len(COLUMNS) + CUSTOMERS_COL_WIDTH + ACTION_COL_WIDTH
 
 
 def build_ledger_view(page: ft.Page):
-    # ---------- session-only assignment state (never written to the database;
-    # resets every time this view is (re)built, i.e. on navigating away/back
-    # or reopening the app) ----------
-    session_links = {}  # item_code -> set(customer_id)
+    # ---------- database-backed assignment state ----------
+    session_links = fetch_assignments()  # item_code -> set(customer_id) loaded from DB
 
     customer_lookup = {}
     dropdown_container = ft.Container(expand=1)
@@ -62,11 +64,11 @@ def build_ledger_view(page: ft.Page):
     empty_container = empty_state("Assign stock to a customer below to see it here.")
     empty_container.visible = True
 
-    current_item_codes = {"value": []}  # accumulated across assign actions, this session only
+    current_item_codes = {"value": list(session_links.keys())}  # loaded from DB
 
     section_label = eyebrow_text("Assigned Items")
     clear_btn = ghost_button("Clear", on_click=lambda e: clear_assigned())
-    clear_btn.visible = False
+    clear_btn.visible = bool(current_item_codes["value"])
 
     section_header_row = ft.Row(
         [section_label, ft.Container(expand=True), clear_btn],
@@ -74,6 +76,8 @@ def build_ledger_view(page: ft.Page):
     )
 
     def clear_assigned():
+        clear_assignments()
+        session_links.clear()
         current_item_codes["value"] = []
         section_label.value = "ASSIGNED ITEMS"
         clear_btn.visible = False
@@ -111,24 +115,34 @@ def build_ledger_view(page: ft.Page):
         raw_codes = [c.strip() for c in codes_text.replace("\n", ",").split(",") if c.strip()]
 
         matched_rows = fetch_by_item_codes(raw_codes)
-        matched_codes = {row[0] for row in matched_rows}
+        matched_codes = [row[0] for row in matched_rows]
         not_found = [c for c in raw_codes if c not in matched_codes]
 
-        for code in matched_codes:
+        already_added = [c for c in matched_codes if customer_id in session_links.get(c, set())]
+        new_codes = [c for c in matched_codes if customer_id not in session_links.get(c, set())]
+
+        if not new_codes and already_added:
+            snack(page, "Item already added", accent=CLAY)
+            page.update()
+            return
+
+        for code in new_codes:
             session_links.setdefault(code, set()).add(customer_id)
 
-        codes_field.value = ""
-
-        if matched_codes:
-            render_assigned(list(matched_codes))
+        if new_codes:
+            save_customer_assignments(customer_id, new_codes)
+            render_assigned(new_codes)
             section_label.value = f"ASSIGNED ITEMS · {len(current_item_codes['value'])} total"
             export_btn.disabled = False
+            codes_field.value = ""
 
-        if matched_codes and not not_found:
-            snack(page, f"Assigned {len(matched_codes)} item(s)")
-        elif matched_codes and not_found:
-            snack(page, f"Assigned {len(matched_codes)}; not found: {', '.join(not_found)}", accent=CLAY)
-        else:
+        if new_codes and not not_found and not already_added:
+            snack(page, f"Assigned {len(new_codes)} item(s)")
+        elif new_codes and already_added:
+            snack(page, f"Assigned {len(new_codes)} item(s); Item already added", accent=CLAY)
+        elif new_codes and not_found:
+            snack(page, f"Assigned {len(new_codes)}; not found: {', '.join(not_found)}", accent=CLAY)
+        elif not_found:
             snack(page, f"No matching item codes found: {', '.join(not_found)}", accent=CLAY)
         page.update()
 
@@ -142,7 +156,7 @@ def build_ledger_view(page: ft.Page):
         vertical_alignment=ft.CrossAxisAlignment.CENTER,
     )
 
-    # ---------- export (built entirely from in-memory session_links, no DB join) ----------
+    # ---------- export (built entirely from session_links, no DB join) ----------
     export_picker = ft.FilePicker()
     page.services.append(export_picker)
 
@@ -182,9 +196,9 @@ def build_ledger_view(page: ft.Page):
         page.update()
 
     export_btn = primary_button("Export CSV", on_click=on_export_click, icon=ft.Icons.FILE_DOWNLOAD_OUTLINED, expand=True)
-    export_btn.disabled = True
+    export_btn.disabled = not bool(current_item_codes["value"])
 
-    # ---------- per-row link dialog (session-only) ----------
+    # ---------- per-row link dialog ----------
     link_item_code = {"value": None}
     link_checkboxes_column = ft.Column(spacing=SPACE_SM, scroll=ft.ScrollMode.AUTO, height=260)
     link_dialog_title = heading_text("Link Customers", size=18)
@@ -207,6 +221,8 @@ def build_ledger_view(page: ft.Page):
             session_links[item_code] = selected_ids
         elif item_code in session_links:
             del session_links[item_code]
+
+        update_item_assignments(item_code, selected_ids)
 
         page.pop_dialog()
         page.update()
@@ -320,6 +336,16 @@ def build_ledger_view(page: ft.Page):
         expand=True,
     )
 
+    # Initial load of stored assignments from DB
+    if current_item_codes["value"]:
+        section_label.value = f"ASSIGNED ITEMS · {len(current_item_codes['value'])} total"
+        render_rows(fetch_by_item_codes(current_item_codes["value"]))
+
+    def refresh_and_render():
+        refresh_customer_list()
+        if current_item_codes["value"]:
+            render_rows(fetch_by_item_codes(current_item_codes["value"]))
+
     # Attach refresh hook so main.py can call it on tab switch
-    view.refresh_customers = refresh_customer_list
+    view.refresh_customers = refresh_and_render
     return view

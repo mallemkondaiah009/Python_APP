@@ -5,6 +5,7 @@ import sqlite3
 
 TABLE_NAME = "uploaded_data"
 CUSTOMER_TABLE = "customers"
+ASSIGNMENTS_TABLE = "customer_assignments"
 
 # 5 columns picked from StockTable
 COLUMNS = ["item_code", "item_tag", "purity", "net_weight", "gross_weight"]
@@ -206,10 +207,18 @@ def update_customer(customer_id, customer_code, customer_name, customer_number):
 
 
 def delete_customer(customer_id):
-    """Delete a customer row by id."""
+    """Delete a customer row by id and clean up assignments."""
     init_customer_table()
+    init_assignments_table()
     conn = sqlite3.connect(get_db_path())
+    cur = conn.cursor()
+    cur.execute(f"SELECT customer_name FROM {CUSTOMER_TABLE} WHERE id = ?", (customer_id,))
+    row = cur.fetchone()
+    cust_name = row[0] if row else None
+
     conn.execute(f"DELETE FROM {CUSTOMER_TABLE} WHERE id = ?", (customer_id,))
+    if cust_name:
+        conn.execute(f"DELETE FROM {ASSIGNMENTS_TABLE} WHERE customer_name = ?", (cust_name,))
     conn.commit()
     conn.close()
 
@@ -226,3 +235,173 @@ def fetch_customers(limit=100):
     rows = cur.fetchall()
     conn.close()
     return rows
+
+
+# ---------- customer assignments ----------
+
+def init_assignments_table():
+    conn = sqlite3.connect(get_db_path())
+    conn.execute(f"""
+        CREATE TABLE IF NOT EXISTS {ASSIGNMENTS_TABLE} (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            customer_name TEXT NOT NULL,
+            customer_code TEXT,
+            item_code TEXT NOT NULL,
+            item_tag TEXT,
+            purity TEXT,
+            net_weight REAL,
+            gross_weight REAL,
+            assigned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(customer_name, item_code)
+        )
+    """)
+    # Migration check for existing table missing columns
+    cursor = conn.cursor()
+    cursor.execute(f"PRAGMA table_info({ASSIGNMENTS_TABLE})")
+    existing_cols = {row[1] for row in cursor.fetchall()}
+
+    expected_cols = {
+        "customer_name": "TEXT",
+        "customer_code": "TEXT",
+        "item_tag": "TEXT",
+        "purity": "TEXT",
+        "net_weight": "REAL",
+        "gross_weight": "REAL",
+    }
+    for col, col_type in expected_cols.items():
+        if col not in existing_cols:
+            try:
+                conn.execute(f"ALTER TABLE {ASSIGNMENTS_TABLE} ADD COLUMN {col} {col_type}")
+            except sqlite3.OperationalError:
+                pass
+
+    try:
+        conn.execute(f"CREATE INDEX IF NOT EXISTS idx_assignments_cust_name ON {ASSIGNMENTS_TABLE} (customer_name)")
+    except sqlite3.OperationalError:
+        pass
+    try:
+        conn.execute(f"CREATE INDEX IF NOT EXISTS idx_assignments_item ON {ASSIGNMENTS_TABLE} (item_code)")
+    except sqlite3.OperationalError:
+        pass
+    conn.commit()
+    conn.close()
+
+
+def save_customer_assignments(customer_id, item_codes):
+    """Save customer assignments for given item_codes into DB table using customer_name and total stock row data."""
+    init_assignments_table()
+    if not item_codes:
+        return
+    conn = sqlite3.connect(get_db_path())
+    cur = conn.cursor()
+
+    # 1. Fetch customer name & customer code
+    cur.execute(f"SELECT customer_name, customer_code FROM {CUSTOMER_TABLE} WHERE id = ?", (customer_id,))
+    cust_row = cur.fetchone()
+    if not cust_row:
+        conn.close()
+        return
+    cust_name, cust_code = cust_row[0], (cust_row[1] or "")
+
+    # 2. Fetch full stock rows from uploaded_data
+    placeholders = ",".join("?" for _ in item_codes)
+    try:
+        cur.execute(
+            f"SELECT item_code, item_tag, purity, net_weight, gross_weight FROM {TABLE_NAME} WHERE item_code IN ({placeholders})",
+            item_codes,
+        )
+        stock_rows = cur.fetchall()
+    except sqlite3.OperationalError:
+        stock_rows = []
+
+    stock_dict = {row[0]: row[1:] for row in stock_rows}
+
+    records = []
+    for code in item_codes:
+        stock_info = stock_dict.get(code, ("", "", 0.0, 0.0))
+        tag, purity, net_w, gross_w = stock_info
+        records.append((cust_name, cust_code, code, tag, purity, net_w, gross_w))
+
+    cur.executemany(
+        f"""INSERT OR REPLACE INTO {ASSIGNMENTS_TABLE} 
+            (customer_name, customer_code, item_code, item_tag, purity, net_weight, gross_weight)
+            VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        records,
+    )
+    conn.commit()
+    conn.close()
+
+
+def update_item_assignments(item_code, customer_ids):
+    """Replace all customer links for a given item_code in DB table using customer_name and total stock row data."""
+    init_assignments_table()
+    conn = sqlite3.connect(get_db_path())
+    cur = conn.cursor()
+    cur.execute(f"DELETE FROM {ASSIGNMENTS_TABLE} WHERE item_code = ?", (item_code,))
+    if customer_ids:
+        try:
+            cur.execute(
+                f"SELECT item_tag, purity, net_weight, gross_weight FROM {TABLE_NAME} WHERE item_code = ?",
+                (item_code,),
+            )
+            s_row = cur.fetchone()
+        except sqlite3.OperationalError:
+            s_row = None
+
+        tag, purity, net_w, gross_w = s_row if s_row else ("", "", 0.0, 0.0)
+
+        cust_placeholders = ",".join("?" for _ in customer_ids)
+        try:
+            cur.execute(
+                f"SELECT id, customer_name, customer_code FROM {CUSTOMER_TABLE} WHERE id IN ({cust_placeholders})",
+                list(customer_ids),
+            )
+            cust_rows = cur.fetchall()
+        except sqlite3.OperationalError:
+            cust_rows = []
+
+        records = []
+        for cid, cname, ccode in cust_rows:
+            records.append((cname, ccode or "", item_code, tag, purity, net_w, gross_w))
+
+        cur.executemany(
+            f"""INSERT OR REPLACE INTO {ASSIGNMENTS_TABLE}
+                (customer_name, customer_code, item_code, item_tag, purity, net_weight, gross_weight)
+                VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            records,
+        )
+    conn.commit()
+    conn.close()
+
+
+def fetch_assignments():
+    """Returns stored assignments as dict mapping item_code -> set(customer_id)."""
+    init_assignments_table()
+    init_customer_table()
+    conn = sqlite3.connect(get_db_path())
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            f"""SELECT a.item_code, c.id 
+                FROM {ASSIGNMENTS_TABLE} a
+                JOIN {CUSTOMER_TABLE} c ON a.customer_name = c.customer_name"""
+        )
+        rows = cur.fetchall()
+    except sqlite3.OperationalError:
+        rows = []
+    conn.close()
+    result = {}
+    for item_code, customer_id in rows:
+        result.setdefault(item_code, set()).add(customer_id)
+    return result
+
+
+def clear_assignments():
+    """Clear all stored customer assignments from DB table."""
+    init_assignments_table()
+    conn = sqlite3.connect(get_db_path())
+    conn.execute(f"DELETE FROM {ASSIGNMENTS_TABLE}")
+    conn.commit()
+    conn.close()
+
+

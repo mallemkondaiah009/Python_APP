@@ -2,7 +2,7 @@ import flet as ft
 from ui.ledger_view import build_ledger_view
 from ui.upload_view import build_upload_view
 from ui.customer_view import build_customers_view
-from db.storage import init_customer_table
+from db.storage import init_customer_table, init_assignments_table
 
 INK = "#14161C"
 SURFACE = "#1E212B"
@@ -14,8 +14,9 @@ SLATE = "#8B90A0"
 
 def main(page: ft.Page):
     init_customer_table()
+    init_assignments_table()
 
-    page.title = "Stock Uploader"
+    page.title = "ABS"
     page.theme_mode = ft.ThemeMode.DARK
     page.bgcolor = INK
     page.padding = 0
@@ -81,7 +82,7 @@ def main(page: ft.Page):
                     [
                         ft.Icon(ft.Icons.DIAMOND_OUTLINED, color=BRASS, size=20),
                         ft.Text(
-                            "STOCK UPLOADER", size=16, weight=ft.FontWeight.W_600, color=BRASS,
+                            "ABS", size=16, weight=ft.FontWeight.W_600, color=BRASS,
                             style=ft.TextStyle(font_family="Playfair", letter_spacing=1),
                         ),
                     ],
@@ -114,7 +115,7 @@ def main(page: ft.Page):
             ),
         ),
         title=ft.Text(
-            "STOCK UPLOADER", size=17, weight=ft.FontWeight.W_600, color=BRASS,
+            "ABS", size=17, weight=ft.FontWeight.W_600, color=BRASS,
             style=ft.TextStyle(font_family="Playfair", letter_spacing=1.5),
         ),
         center_title=False,
