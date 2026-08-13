@@ -76,15 +76,6 @@ def build_ledger_view(page: ft.Page):
         alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
     )
 
-    def clear_assigned():
-        clear_assignments()
-        session_links.clear()
-        current_item_codes["value"] = []
-        section_label.value = "ASSIGNED ITEMS"
-        clear_btn.visible = False
-        export_btn.disabled = True
-        render_rows([])
-        page.update()
 
     # ---------- assign by item code / bluetooth barcode scanner ----------
     codes_field = app_text_field(label=None, hint="Scan barcode or type item code (e.g. RG-101)")
@@ -136,7 +127,8 @@ def build_ledger_view(page: ft.Page):
             save_customer_assignments(customer_id, new_rows)
             render_assigned(new_keys)
             section_label.value = f"ASSIGNED ITEMS · {len(current_item_codes['value'])} total"
-            export_btn.disabled = False
+            export_csv_btn.disabled = False
+            export_pdf_btn.disabled = False
             codes_field.value = ""
 
         if new_rows and not already_added:
@@ -170,7 +162,7 @@ def build_ledger_view(page: ft.Page):
         spacing=SPACE_SM,
     )
 
-    # ---------- export (built entirely from session_links, no DB join) ----------
+    # ---------- export (CSV & PDF built from session_links) ----------
     export_picker = ft.FilePicker()
     page.services.append(export_picker)
 
@@ -189,6 +181,94 @@ def build_ledger_view(page: ft.Page):
             writer.writerow(list(row) + [", ".join(names)])
         return output.getvalue()
 
+    def build_export_pdf():
+        import io
+        import datetime
+        from reportlab.lib.pagesizes import letter, landscape
+        from reportlab.lib import colors
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(
+            buffer,
+            pagesize=landscape(letter),
+            rightMargin=36,
+            leftMargin=36,
+            topMargin=36,
+            bottomMargin=36,
+        )
+        styles = getSampleStyleSheet()
+
+        title_style = ParagraphStyle(
+            "DocTitle",
+            parent=styles["Heading1"],
+            fontName="Helvetica-Bold",
+            fontSize=16,
+            leading=20,
+            textColor=colors.HexColor("#9E7A36"),
+            spaceAfter=4,
+        )
+        meta_style = ParagraphStyle(
+            "DocMeta",
+            parent=styles["Normal"],
+            fontName="Helvetica",
+            fontSize=9,
+            leading=12,
+            textColor=colors.HexColor("#5A6B7C"),
+            spaceAfter=12,
+        )
+        header_cell_style = ParagraphStyle(
+            "HeaderCell",
+            parent=styles["Normal"],
+            fontName="Helvetica-Bold",
+            fontSize=8.5,
+            leading=10,
+            textColor=colors.HexColor("#FFFFFF"),
+        )
+        data_cell_style = ParagraphStyle(
+            "DataCell",
+            parent=styles["Normal"],
+            fontName="Helvetica",
+            fontSize=8,
+            leading=10,
+            textColor=colors.HexColor("#1A1A1E"),
+        )
+
+        story = []
+        story.append(Paragraph("ASSIGNED STOCK LEDGER REPORT", title_style))
+        now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        story.append(Paragraph(f"Generated: {now_str}  ·  Total Items: {len(current_item_codes['value'])}", meta_style))
+
+        rows = fetch_by_item_codes(current_item_codes["value"])
+        table_data = [[Paragraph(c, header_cell_style) for c in (COLUMNS + ["Linked Customers"])]]
+
+        for row in rows:
+            item_key = f"{row[0]}-{row[1]}"
+            ids = session_links.get(item_key, set())
+            names = [customer_lookup[cid][1] for cid in ids if cid in customer_lookup]
+            linked_str = ", ".join(names) if names else "—"
+
+            row_cells = [Paragraph(str(v), data_cell_style) for v in row]
+            row_cells.append(Paragraph(linked_str, data_cell_style))
+            table_data.append(row_cells)
+
+        col_widths = [75, 75, 140, 70, 75, 75, 170]
+        t = Table(table_data, colWidths=col_widths, repeatRows=1)
+        t.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#1A1A1E")),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+            ('TOPPADDING', (0, 0), (-1, -1), 5),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#D0D0D0")),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor("#F4F5F7")]),
+        ]))
+
+        story.append(t)
+        doc.build(story)
+        return buffer.getvalue()
+
     async def on_export_click(e):
         if not current_item_codes["value"]:
             return
@@ -196,7 +276,7 @@ def build_ledger_view(page: ft.Page):
         csv_text = build_export_csv()
         try:
             result = await export_picker.save_file(
-                dialog_title="Export assigned stock",
+                dialog_title="Export assigned stock (CSV)",
                 file_name="assigned_stock_export.csv",
                 file_type=ft.FilePickerFileType.CUSTOM,
                 allowed_extensions=["csv"],
@@ -209,8 +289,37 @@ def build_ledger_view(page: ft.Page):
             snack(page, f"Export failed: {ex}", accent=CLAY)
         page.update()
 
-    export_btn = primary_button("Export CSV", on_click=on_export_click, icon=ft.Icons.FILE_DOWNLOAD_OUTLINED, expand=True)
-    export_btn.disabled = not bool(current_item_codes["value"])
+    async def on_export_pdf_click(e):
+        if not current_item_codes["value"]:
+            return
+
+        pdf_bytes = build_export_pdf()
+        try:
+            result = await export_picker.save_file(
+                dialog_title="Export assigned stock (PDF)",
+                file_name="assigned_stock_export.pdf",
+                file_type=ft.FilePickerFileType.CUSTOM,
+                allowed_extensions=["pdf"],
+                src_bytes=pdf_bytes,
+            )
+            if not result:
+                return
+            snack(page, "Exported assigned_stock_export.pdf")
+        except Exception as ex:
+            snack(page, f"Export failed: {ex}", accent=CLAY)
+        page.update()
+
+    export_csv_btn = primary_button("Export CSV", on_click=on_export_click, icon=ft.Icons.FILE_DOWNLOAD_OUTLINED, expand=True)
+    export_pdf_btn = primary_button("Export PDF", on_click=on_export_pdf_click, icon=ft.Icons.PICTURE_AS_PDF_OUTLINED, expand=True)
+
+    has_items = bool(current_item_codes["value"])
+    export_csv_btn.disabled = not has_items
+    export_pdf_btn.disabled = not has_items
+
+    export_buttons_row = ft.Row(
+        [export_csv_btn, export_pdf_btn],
+        spacing=SPACE_SM,
+    )
 
     # ---------- per-row link dialog ----------
     link_item_key = {"value": None}
@@ -391,7 +500,8 @@ def build_ledger_view(page: ft.Page):
         current_item_codes["value"] = []
         section_label.value = "ASSIGNED ITEMS"
         clear_btn.visible = False
-        export_btn.disabled = True
+        export_csv_btn.disabled = True
+        export_pdf_btn.disabled = True
         render_rows([])
         render_totals_summary()
         page.update()
@@ -437,7 +547,7 @@ def build_ledger_view(page: ft.Page):
                 ft.Container(height=SPACE_LG),
                 totals_section,
                 ft.Container(height=SPACE_SM),
-                export_btn,
+                export_buttons_row,
             ],
             spacing=SPACE_SM,
             scroll=ft.ScrollMode.AUTO,
@@ -460,12 +570,14 @@ def build_ledger_view(page: ft.Page):
         current_item_codes["value"] = list(session_links.keys())
         if current_item_codes["value"]:
             clear_btn.visible = True
-            export_btn.disabled = False
+            export_csv_btn.disabled = False
+            export_pdf_btn.disabled = False
             section_label.value = f"ASSIGNED ITEMS · {len(current_item_codes['value'])} total"
             render_rows(fetch_by_item_codes(current_item_codes["value"]))
         else:
             clear_btn.visible = False
-            export_btn.disabled = True
+            export_csv_btn.disabled = True
+            export_pdf_btn.disabled = True
             section_label.value = "ASSIGNED ITEMS"
             render_rows([])
         render_totals_summary()
