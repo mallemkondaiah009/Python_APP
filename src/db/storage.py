@@ -327,6 +327,7 @@ def init_assignments_table():
         "purity": "TEXT",
         "net_weight": "REAL",
         "gross_weight": "REAL",
+        "assigned_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
     }
     for col, col_type in expected_cols.items():
         if col not in existing_cols:
@@ -506,6 +507,95 @@ def fetch_customer_purity_breakdown():
     for cname, purity, total_net in rows:
         result.setdefault(cname, {})[purity] = round(float(total_net), 3)
     return result
+
+
+def fetch_report_purities():
+    """Returns sorted list of distinct purity values present in customer assignments."""
+    init_assignments_table()
+    conn = sqlite3.connect(get_db_path())
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            f"SELECT DISTINCT purity FROM {ASSIGNMENTS_TABLE} WHERE purity IS NOT NULL AND purity != '' ORDER BY purity ASC"
+        )
+        rows = cur.fetchall()
+    except sqlite3.OperationalError:
+        rows = []
+    conn.close()
+    return [r[0] for r in rows if r[0]]
+
+
+def fetch_report_assignments(customer_name=None, start_date=None, end_date=None, purity=None, search_query=None):
+    """Fetch assigned items with flexible filtering criteria.
+    Returns list of dicts with formatted values.
+    """
+    init_assignments_table()
+    conn = sqlite3.connect(get_db_path())
+    cur = conn.cursor()
+
+    conditions = []
+    params = []
+
+    if customer_name and str(customer_name).strip() and str(customer_name).strip().upper() != "ALL":
+        conditions.append("LOWER(customer_name) = LOWER(?)")
+        params.append(str(customer_name).strip())
+
+    if purity and str(purity).strip() and str(purity).strip().upper() != "ALL":
+        conditions.append("LOWER(purity) = LOWER(?)")
+        params.append(str(purity).strip())
+
+    if start_date and str(start_date).strip():
+        s_date = str(start_date).strip()
+        if len(s_date) == 10:
+            s_date += " 00:00:00"
+        conditions.append("assigned_at >= ?")
+        params.append(s_date)
+
+    if end_date and str(end_date).strip():
+        e_date = str(end_date).strip()
+        if len(e_date) == 10:
+            e_date += " 23:59:59"
+        conditions.append("assigned_at <= ?")
+        params.append(e_date)
+
+    if search_query and str(search_query).strip():
+        q = f"%{str(search_query).strip().lower()}%"
+        conditions.append(
+            "(LOWER(item_no) LIKE ? OR LOWER(tag) LIKE ? OR LOWER(item_no || '-' || tag) LIKE ? OR LOWER(item_no || tag) LIKE ? OR LOWER(customer_name) LIKE ? OR LOWER(customer_code) LIKE ?)"
+        )
+        params.extend([q, q, q, q, q, q])
+
+    where_clause = " WHERE " + " AND ".join(conditions) if conditions else ""
+
+    try:
+        cur.execute(
+            f"""SELECT id, customer_name, customer_code, item_no, tag, purity, 
+                       net_weight, gross_weight, assigned_at
+                FROM {ASSIGNMENTS_TABLE}
+                {where_clause}
+                ORDER BY assigned_at DESC, id DESC""",
+            params,
+        )
+        rows = cur.fetchall()
+    except sqlite3.OperationalError:
+        rows = []
+    conn.close()
+
+    results = []
+    for r in rows:
+        results.append({
+            "id": r[0],
+            "customer_name": r[1] or "—",
+            "customer_code": r[2] or "—",
+            "item_no": r[3] or "",
+            "tag": r[4] or "",
+            "purity": r[5] or "—",
+            "net_weight": round(float(r[6] or 0.0), 3),
+            "gross_weight": round(float(r[7] or 0.0), 3),
+            "assigned_at": str(r[8])[:19] if r[8] else "—",
+        })
+    return results
+
 
 
 

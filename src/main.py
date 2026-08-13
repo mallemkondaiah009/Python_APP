@@ -2,6 +2,7 @@ import flet as ft
 from ui.ledger_view import build_ledger_view
 from ui.upload_view import build_upload_view
 from ui.customer_view import build_customers_view
+from ui.report_view import build_reports_view
 from db.storage import init_customer_table, init_assignments_table
 
 INK = "#14161C"
@@ -54,6 +55,13 @@ def main(page: ft.Page):
         content_area.content = get_view("customers", build_customers_view)
         page.update()
 
+    def show_reports():
+        view = get_view("reports", build_reports_view)
+        if hasattr(view, "refresh_report"):
+            view.refresh_report()
+        content_area.content = view
+        page.update()
+
     async def go_ledger(e):
         await page.close_drawer()
         show_ledger()
@@ -65,6 +73,10 @@ def main(page: ft.Page):
     async def go_customers(e):
         await page.close_drawer()
         show_customers()
+
+    async def go_reports(e):
+        await page.close_drawer()
+        show_reports()
 
     def menu_item(icon, label, on_click):
         return ft.ListTile(
@@ -95,6 +107,7 @@ def main(page: ft.Page):
             menu_item(ft.Icons.HOME_OUTLINED, "Stock Ledger", go_ledger),
             menu_item(ft.Icons.UPLOAD_FILE_OUTLINED, "Upload Data", go_upload),
             menu_item(ft.Icons.PEOPLE_OUTLINE, "Customers", go_customers),
+            menu_item(ft.Icons.ASSESSMENT_OUTLINED, "Reports", go_reports),
         ],
     )
 
