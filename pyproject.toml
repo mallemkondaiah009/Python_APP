@@ -1,5 +1,5 @@
 [project]
-name = "abs"
+name = "ABS"
 version = "0.1.0"
 description = ""
 readme = "README.md"
@@ -7,10 +7,7 @@ requires-python = ">=3.10"
 authors = [
     { name = "Flet developer", email = "you@example.com" }
 ]
-dependencies = [
-    "flet>=0.86.5",
-    "reportlab>=5.0.0"
-]
+dependencies = []
 
 [dependency-groups]
 dev = [
