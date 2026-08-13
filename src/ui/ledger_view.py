@@ -90,7 +90,7 @@ def build_ledger_view(page: ft.Page):
         clear_btn.visible = True
         render_rows(fetch_by_item_codes(combined))
 
-    def on_assign_click(e):
+    async def on_assign_click(e):
         dropdown_ctrl = dropdown_container.content
         customer_key = dropdown_ctrl.value if dropdown_ctrl else None
         codes_text = (codes_field.value or "").strip()
@@ -139,7 +139,7 @@ def build_ledger_view(page: ft.Page):
             snack(page, f"No matching item found for: {', '.join(raw_codes)}", accent=CLAY)
         
         try:
-            codes_field.focus()
+            await codes_field.focus()
         except Exception:
             pass
         page.update()
@@ -173,12 +173,16 @@ def build_ledger_view(page: ft.Page):
         rows = fetch_by_item_codes(current_item_codes["value"])
         output = io.StringIO()
         writer = csv.writer(output)
-        writer.writerow(COLUMNS + ["linked_customers"])
+        writer.writerow(COLUMNS + ["customer"])
         for row in rows:
             item_key = f"{row[0]}-{row[1]}"
             ids = session_links.get(item_key, set())
             names = [customer_lookup[cid][1] for cid in ids if cid in customer_lookup]
-            writer.writerow(list(row) + [", ".join(names)])
+            if not names:
+                writer.writerow(list(row) + ["—"])
+            else:
+                for cust_name in names:
+                    writer.writerow(list(row) + [cust_name])
         return output.getvalue()
 
     def build_export_pdf():
@@ -241,17 +245,18 @@ def build_ledger_view(page: ft.Page):
         story.append(Paragraph(f"Generated: {now_str}  ·  Total Items: {len(current_item_codes['value'])}", meta_style))
 
         rows = fetch_by_item_codes(current_item_codes["value"])
-        table_data = [[Paragraph(c, header_cell_style) for c in (COLUMNS + ["Linked Customers"])]]
+        table_data = [[Paragraph(c, header_cell_style) for c in (COLUMNS + ["Customer"])]]
 
         for row in rows:
             item_key = f"{row[0]}-{row[1]}"
             ids = session_links.get(item_key, set())
             names = [customer_lookup[cid][1] for cid in ids if cid in customer_lookup]
-            linked_str = ", ".join(names) if names else "—"
+            customer_list = names if names else ["—"]
 
-            row_cells = [Paragraph(str(v), data_cell_style) for v in row]
-            row_cells.append(Paragraph(linked_str, data_cell_style))
-            table_data.append(row_cells)
+            for cust_name in customer_list:
+                row_cells = [Paragraph(str(v), data_cell_style) for v in row]
+                row_cells.append(Paragraph(cust_name, data_cell_style))
+                table_data.append(row_cells)
 
         col_widths = [75, 75, 140, 70, 75, 75, 170]
         t = Table(table_data, colWidths=col_widths, repeatRows=1)
@@ -457,37 +462,35 @@ def build_ledger_view(page: ft.Page):
             return
 
         row_controls = []
-        for i, row in enumerate(rows):
+        row_index = 0
+        for row in rows:
             item_key = f"{row[0]}-{row[1]}"
             linked_ids = session_links.get(item_key, set())
             names = [customer_lookup[cid][1] for cid in linked_ids if cid in customer_lookup]
-            if not names:
-                linked_display = "—"
-            elif len(names) == 1:
-                linked_display = names[0]
-            else:
-                linked_display = f"{names[0]} +{len(names) - 1}"
+            customer_list = names if names else ["—"]
 
-            row_controls.append(
-                table_data_row(
-                    [ft.Container(data_cell_text(v), width=COL_WIDTH) for v in row]
-                    + [ft.Container(
-                        data_cell_text(linked_display, muted=(linked_display == "—")),
-                        width=CUSTOMERS_COL_WIDTH,
-                    )]
-                    + [
-                        ft.Container(
-                            content=icon_action_button(
-                                ft.Icons.LINK, BRASS, "Link customers",
-                                lambda e, ik=item_key: open_link_dialog(ik),
-                            ),
-                            width=ACTION_COL_WIDTH,
-                            alignment=ft.Alignment.CENTER,
-                        )
-                    ],
-                    index=i,
+            for cust_name in customer_list:
+                row_controls.append(
+                    table_data_row(
+                        [ft.Container(data_cell_text(v), width=COL_WIDTH) for v in row]
+                        + [ft.Container(
+                            data_cell_text(cust_name, muted=(cust_name == "—")),
+                            width=CUSTOMERS_COL_WIDTH,
+                        )]
+                        + [
+                            ft.Container(
+                                content=icon_action_button(
+                                    ft.Icons.LINK, BRASS, "Link customers",
+                                    lambda e, ik=item_key: open_link_dialog(ik),
+                                ),
+                                width=ACTION_COL_WIDTH,
+                                alignment=ft.Alignment.CENTER,
+                            )
+                        ],
+                        index=row_index,
+                    )
                 )
-            )
+                row_index += 1
         ledger_rows.controls = row_controls
         table_container.visible = True
         empty_container.visible = False
