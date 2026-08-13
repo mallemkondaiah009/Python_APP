@@ -4,7 +4,7 @@ from db.storage import (
     fetch_customer_totals_summary, fetch_customer_purity_breakdown,
 )
 from ui.theme import (
-    INK, SURFACE, BRASS, BRASS_DIM, IVORY, SLATE, CLAY,
+    INK, SURFACE, BRASS, BRASS_DIM, IVORY, SLATE, CLAY, EMERALD, SURFACE_ALT,
     SPACE_XS, SPACE_SM, SPACE_MD, SPACE_LG, RADIUS_SM, RADIUS_MD, RADIUS_LG,
     ROW_H_PAD, PAGE_H_PAD,
     eyebrow_text, heading_text, subheading_text, header_cell_text, data_cell_text,
@@ -86,9 +86,10 @@ def build_ledger_view(page: ft.Page):
         render_rows([])
         page.update()
 
-    # ---------- assign by item code ----------
-    codes_field = app_text_field(label=None, hint="item, e.g. RG-101, NK-103")
+    # ---------- assign by item code / bluetooth barcode scanner ----------
+    codes_field = app_text_field(label=None, hint="Scan barcode or type item code (e.g. RG-101)")
     codes_field.expand = 2
+    codes_field.autofocus = True
 
     def render_assigned(new_item_keys):
         combined = current_item_codes["value"] + [
@@ -144,7 +145,15 @@ def build_ledger_view(page: ft.Page):
             snack(page, f"Assigned {len(new_rows)} item(s); Item already added", accent=CLAY)
         elif not matched_rows:
             snack(page, f"No matching item found for: {', '.join(raw_codes)}", accent=CLAY)
+        
+        try:
+            codes_field.focus()
+        except Exception:
+            pass
         page.update()
+
+    # Link Enter/Return key (sent by Bluetooth scanners) to trigger assignment automatically
+    codes_field.on_submit = on_assign_click
 
     assign_row = ft.Column(
         [
