@@ -1,7 +1,7 @@
 import flet as ft
-from ui.ledger_view import build_ledger_view
 from ui.upload_view import build_upload_view
 from ui.customer_view import build_customers_view
+from ui.orderform_view import build_orderform_view
 from ui.report_view import build_reports_view
 from db.storage import init_customer_table, init_assignments_table
 
@@ -39,20 +39,20 @@ def main(page: ft.Page):
             cached_views[name] = builder(page)
         return cached_views[name]
 
-    def show_ledger():
-        view = get_view("ledger", build_ledger_view)
-        # Refresh customer dropdown to pick up newly added customers
-        if hasattr(view, "refresh_customers"):
-            view.refresh_customers()
-        content_area.content = view
-        page.update()
-
     def show_upload():
         content_area.content = get_view("upload", build_upload_view)
         page.update()
 
     def show_customers():
         content_area.content = get_view("customers", build_customers_view)
+        page.update()
+
+    def show_orderform():
+        view = get_view("orderform", build_orderform_view)
+        # Refresh customer dropdown to pick up newly added customers
+        if hasattr(view, "refresh_customers"):
+            view.refresh_customers()
+        content_area.content = view
         page.update()
 
     def show_reports():
@@ -62,10 +62,6 @@ def main(page: ft.Page):
         content_area.content = view
         page.update()
 
-    async def go_ledger(e):
-        await page.close_drawer()
-        show_ledger()
-
     async def go_upload(e):
         await page.close_drawer()
         show_upload()
@@ -73,6 +69,10 @@ def main(page: ft.Page):
     async def go_customers(e):
         await page.close_drawer()
         show_customers()
+
+    async def go_orderform(e):
+        await page.close_drawer()
+        show_orderform()
 
     async def go_reports(e):
         await page.close_drawer()
@@ -104,9 +104,9 @@ def main(page: ft.Page):
             ),
             ft.Divider(color=BRASS_DIM, height=1),
             ft.Container(height=4),
-            menu_item(ft.Icons.HOME_OUTLINED, "Stock Ledger", go_ledger),
             menu_item(ft.Icons.UPLOAD_FILE_OUTLINED, "Upload Data", go_upload),
             menu_item(ft.Icons.PEOPLE_OUTLINE, "Customers", go_customers),
+            menu_item(ft.Icons.ASSIGNMENT_OUTLINED, "Order Form", go_orderform),
             menu_item(ft.Icons.ASSESSMENT_OUTLINED, "Reports", go_reports),
         ],
     )
@@ -137,7 +137,7 @@ def main(page: ft.Page):
     )
 
     page.add(content_area)
-    show_ledger()  # default landing view
+    show_orderform()  # default landing view
 
 
 if __name__ == "__main__":

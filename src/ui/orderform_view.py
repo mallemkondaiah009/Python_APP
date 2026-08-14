@@ -20,7 +20,7 @@ ACTION_COL_WIDTH = 56
 TABLE_WIDTH = COL_WIDTH * len(COLUMNS) + CUSTOMERS_COL_WIDTH + ACTION_COL_WIDTH
 
 
-def build_ledger_view(page: ft.Page):
+def build_orderform_view(page: ft.Page):
     # ---------- database-backed assignment state ----------
     session_links = fetch_assignments()  # item_code -> set(customer_id) loaded from DB
 
@@ -80,7 +80,6 @@ def build_ledger_view(page: ft.Page):
     # ---------- assign by item code / bluetooth barcode scanner ----------
     codes_field = app_text_field(label=None, hint="Scan barcode or type item code (e.g. RG-101)")
     codes_field.expand = 2
-    codes_field.autofocus = True
 
     def render_assigned(new_item_keys):
         combined = current_item_codes["value"] + [
@@ -240,7 +239,7 @@ def build_ledger_view(page: ft.Page):
         )
 
         story = []
-        story.append(Paragraph("ASSIGNED STOCK LEDGER REPORT", title_style))
+        story.append(Paragraph("ASSIGNED ORDER FORM REPORT", title_style))
         now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         story.append(Paragraph(f"Generated: {now_str}  ·  Total Items: {len(current_item_codes['value'])}", meta_style))
 
@@ -281,15 +280,15 @@ def build_ledger_view(page: ft.Page):
         csv_text = build_export_csv()
         try:
             result = await export_picker.save_file(
-                dialog_title="Export assigned stock (CSV)",
-                file_name="assigned_stock_export.csv",
+                dialog_title="Export assigned order form (CSV)",
+                file_name="order_form_export.csv",
                 file_type=ft.FilePickerFileType.CUSTOM,
                 allowed_extensions=["csv"],
                 src_bytes=csv_text.encode("utf-8"),
             )
             if not result:
                 return
-            snack(page, "Exported assigned_stock_export.csv")
+            snack(page, "Exported order_form_export.csv")
         except Exception as ex:
             snack(page, f"Export failed: {ex}", accent=CLAY)
         page.update()
@@ -301,15 +300,15 @@ def build_ledger_view(page: ft.Page):
         pdf_bytes = build_export_pdf()
         try:
             result = await export_picker.save_file(
-                dialog_title="Export assigned stock (PDF)",
-                file_name="assigned_stock_export.pdf",
+                dialog_title="Export assigned order form (PDF)",
+                file_name="order_form_export.pdf",
                 file_type=ft.FilePickerFileType.CUSTOM,
                 allowed_extensions=["pdf"],
                 src_bytes=pdf_bytes,
             )
             if not result:
                 return
-            snack(page, "Exported assigned_stock_export.pdf")
+            snack(page, "Exported order_form_export.pdf")
         except Exception as ex:
             snack(page, f"Export failed: {ex}", accent=CLAY)
         page.update()
@@ -588,3 +587,7 @@ def build_ledger_view(page: ft.Page):
     # Attach refresh hook so main.py can call it on tab switch
     view.refresh_customers = refresh_and_render
     return view
+
+
+# Backward-compatibility alias
+build_ledger_view = build_orderform_view
