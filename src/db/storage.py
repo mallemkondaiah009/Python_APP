@@ -40,21 +40,59 @@ def get_db_path():
 
 # ---------- stock ledger ----------
 
+def _normalize_header(h):
+    if not h:
+        return ""
+    clean = h.strip().lower().replace(" ", "_").replace("-", "_")
+    aliases = {
+        "itemno": "item_no",
+        "item_number": "item_no",
+        "item": "item_no",
+        "net_wt": "net_weight",
+        "net_wt_(g)": "net_weight",
+        "net_weight_(g)": "net_weight",
+        "gross_wt": "gross_weight",
+        "gross_wt_(g)": "gross_weight",
+        "gross_weight_(g)": "gross_weight",
+    }
+    return aliases.get(clean, clean)
+
+
+def _safe_float(val):
+    if val is None:
+        return 0.0
+    s = str(val).strip().replace(",", "")
+    try:
+        return float(s)
+    except (ValueError, TypeError):
+        return 0.0
+
+
 def store_csv_in_sqlite(csv_text):
     reader = csv.DictReader(io.StringIO(csv_text))
 
     if not reader.fieldnames:
         raise ValueError("CSV is empty or has no header row")
 
-    reader.fieldnames = [h.strip().lower() for h in reader.fieldnames]
+    # Map raw headers to normalized standard column names
+    header_map = {}
+    for raw in reader.fieldnames:
+        if raw:
+            norm = _normalize_header(raw)
+            header_map[norm] = raw
 
-    missing = [c for c in COLUMNS if c not in reader.fieldnames]
+    missing = [c for c in COLUMNS if c not in header_map]
     if missing:
         raise ValueError(f"CSV is missing required column(s): {', '.join(missing)}")
 
     rows = []
     for row in reader:
-        rows.append(tuple(row.get(col, "") for col in COLUMNS))
+        ino = str(row.get(header_map["item_no"], "") or "").strip()
+        tag = str(row.get(header_map["tag"], "") or "").strip()
+        purity = str(row.get(header_map["purity"], "") or "").strip()
+        net_w = _safe_float(row.get(header_map["net_weight"]))
+        gross_w = _safe_float(row.get(header_map["gross_weight"]))
+        rows.append((ino, tag, purity, net_w, gross_w))
 
     conn = sqlite3.connect(get_db_path())
     cur = conn.cursor()
@@ -107,22 +145,25 @@ def search_stock(query, limit=50):
 
 
 def parse_item_query(q):
-    """Parse composite queries like RG-101, RG 101, RG101 into (item_no, tag)."""
+    """Parse composite queries like RG-101, rg-101, RG 101, rg101 into (item_no, tag)."""
     q_str = str(q).strip()
-    m = re.match(r"^([A-Za-z]+)[-_\s]*(\d+)$", q_str)
+    m = re.match(r"^([A-Za-z]+)[-_\s]*(\d+.*)$", q_str)
     if m:
-        return m.group(1).upper(), m.group(2)
+        return m.group(1).upper(), m.group(2).upper()
     if "-" in q_str:
         parts = q_str.split("-", 1)
-        return parts[0].strip().upper(), parts[1].strip()
+        return parts[0].strip().upper(), parts[1].strip().upper()
     if " " in q_str:
         parts = q_str.split(None, 1)
-        return parts[0].strip().upper(), parts[1].strip()
-    return q_str.upper(), q_str
+        return parts[0].strip().upper(), parts[1].strip().upper()
+    if "_" in q_str:
+        parts = q_str.split("_", 1)
+        return parts[0].strip().upper(), parts[1].strip().upper()
+    return q_str.upper(), q_str.upper()
 
 
 def fetch_by_item_codes(queries):
-    """Returns full stock rows for the given composite item queries (e.g. RG-101, RG 101, RG101)."""
+    """Returns full stock rows for the given composite item queries (case-insensitive)."""
     if not queries:
         return []
     conn = sqlite3.connect(get_db_path())
@@ -131,21 +172,45 @@ def fetch_by_item_codes(queries):
     seen_keys = set()
 
     for q in queries:
-        clean_q = str(q).strip().upper()
-        if not clean_q:
+        raw = str(q).strip()
+        if not raw:
             continue
-        ino, tag = parse_item_query(clean_q)
-        raw_no_dash = clean_q.replace("-", "").replace(" ", "")
+        clean_upper = raw.upper()
+        alphanumeric = re.sub(r'[^A-Z0-9]', '', clean_upper)
+
+        parts = re.split(r'[-_\s]+', clean_upper)
+        p1 = parts[0] if len(parts) > 0 else clean_upper
+        p2 = parts[1] if len(parts) > 1 else ''
+
+        m = re.match(r'^([A-Z]+)(\d+.*)$', clean_upper)
+        m_p1 = m.group(1) if m else ''
+        m_p2 = m.group(2) if m else ''
 
         try:
             cur.execute(
                 f"""SELECT item_no, tag, purity, net_weight, gross_weight 
                     FROM {TABLE_NAME} 
-                    WHERE (UPPER(item_no) = ? AND UPPER(tag) = ?)
-                       OR UPPER(item_no || '-' || tag) = ?
-                       OR UPPER(item_no || tag) = ?
-                       OR (UPPER(tag) = ? AND ? = '')""",
-                (ino, tag, clean_q, raw_no_dash, clean_q, ino),
+                    WHERE UPPER(TRIM(item_no)) = ?
+                       OR UPPER(TRIM(tag)) = ?
+                       OR UPPER(TRIM(item_no) || '-' || TRIM(tag)) = ?
+                       OR UPPER(TRIM(item_no) || ' ' || TRIM(tag)) = ?
+                       OR UPPER(TRIM(item_no) || '_' || TRIM(tag)) = ?
+                       OR UPPER(TRIM(item_no) || TRIM(tag)) = ?
+                       OR (UPPER(TRIM(item_no)) = ? AND UPPER(TRIM(tag)) = ?)
+                       OR (UPPER(TRIM(item_no)) = ? AND UPPER(TRIM(tag)) = ?)
+                       OR (UPPER(TRIM(tag)) = ? AND UPPER(TRIM(item_no)) = ?)
+                       OR REPLACE(REPLACE(REPLACE(UPPER(item_no || tag), '-', ''), '_', ''), ' ', '') = ?
+                       OR (TRIM(tag) = '' AND UPPER(TRIM(item_no)) = ?)
+                       OR (TRIM(tag) != '' AND (UPPER(TRIM(item_no)) = ? OR UPPER(TRIM(item_no || '-' || tag)) = ?))""",
+                (
+                    clean_upper, clean_upper, clean_upper, clean_upper, clean_upper, clean_upper,
+                    p1, p2,
+                    m_p1, m_p2,
+                    p1, p2,
+                    alphanumeric,
+                    clean_upper,
+                    clean_upper, clean_upper,
+                ),
             )
             rows = cur.fetchall()
             for r in rows:

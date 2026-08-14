@@ -18,7 +18,7 @@ from ui.theme import (
     table_shell, table_header_row, table_data_row, empty_state, snack,
 )
 
-# Table column definitions & widths
+# Table column definitions & widths (matching ledger style)
 REPORT_COLUMNS = [
     ("Customer", 130),
     ("Code", 85),
@@ -33,7 +33,7 @@ TABLE_WIDTH = sum(w for _, w in REPORT_COLUMNS)
 
 
 def build_reports_view(page: ft.Page):
-    # ---------- state & controls ----------
+    # ──────────── state & controls ────────────
     customer_dropdown = ft.Dropdown(
         hint_text="Customer",
         options=[ft.DropdownOption(key="ALL", text="All Customers")],
@@ -86,38 +86,60 @@ def build_reports_view(page: ft.Page):
     from_date_field = app_text_field("From Date", "YYYY-MM-DD")
     from_date_field.expand = True
     from_date_field.visible = False
+    from_date_field.read_only = True
 
     to_date_field = app_text_field("To Date", "YYYY-MM-DD")
     to_date_field.expand = True
     to_date_field.visible = False
+    to_date_field.read_only = True
+
+    # Date pickers for custom date range
+    def on_from_date_picked(e):
+        if from_date_picker.value:
+            picked = from_date_picker.value.strftime("%Y-%m-%d")
+            from_date_field.value = picked
+            apply_filters(update_page=True)
+
+    def on_to_date_picked(e):
+        if to_date_picker.value:
+            picked = to_date_picker.value.strftime("%Y-%m-%d")
+            to_date_field.value = picked
+            apply_filters(update_page=True)
+
+    from_date_picker = ft.DatePicker(on_change=on_from_date_picked)
+    to_date_picker = ft.DatePicker(on_change=on_to_date_picked)
+    page.overlay.append(from_date_picker)
+    page.overlay.append(to_date_picker)
+
+    def open_from_picker(e):
+        from_date_picker.open = True
+        page.update()
+
+    def open_to_picker(e):
+        to_date_picker.open = True
+        page.update()
+
+    from_date_field.suffix = ft.IconButton(
+        icon=ft.Icons.CALENDAR_MONTH,
+        icon_color=BRASS,
+        icon_size=20,
+        on_click=open_from_picker,
+    )
+    to_date_field.suffix = ft.IconButton(
+        icon=ft.Icons.CALENDAR_MONTH,
+        icon_color=BRASS,
+        icon_size=20,
+        on_click=open_to_picker,
+    )
 
     search_field = app_text_field(
         label=None,
-        hint="Search Item No, Tag, or Customer...",
+        hint="Search Item No, Tag, Customer...",
         prefix_icon=ft.Icons.SEARCH,
     )
     search_field.expand = True
 
-    # KPI metric displays
-    kpi_items_val = ft.Text("0", size=20, weight=ft.FontWeight.W_700, color=IVORY)
-    kpi_net_val = ft.Text("0.000 g", size=20, weight=ft.FontWeight.W_700, color=BRASS)
-    kpi_gross_val = ft.Text("0.000 g", size=20, weight=ft.FontWeight.W_700, color=IVORY)
-    kpi_cust_val = ft.Text("0", size=20, weight=ft.FontWeight.W_700, color=EMERALD)
-
-    purity_breakdown_column = ft.Column(spacing=SPACE_XS)
-    purity_card_container = ft.Container(
-        content=ft.Column(
-            [
-                eyebrow_text("Purity Breakdown"),
-                ft.Container(height=SPACE_XS),
-                purity_breakdown_column,
-            ],
-            spacing=0,
-        ),
-        visible=False,
-    )
-
-    # Table structure
+    # Table structure (scrollable table like ledger view)
     table_header = table_header_row(
         [ft.Container(header_cell_text(title), width=width) for title, width in REPORT_COLUMNS]
     )
@@ -128,10 +150,13 @@ def build_reports_view(page: ft.Page):
     table_container.visible = False
 
     empty_container = empty_state("No customer assigned stock records match the selected filters.")
+    empty_container.visible = True
+
+    table_section_label = eyebrow_text("Report Records")
 
     filtered_records_store = {"data": []}
 
-    # ---------- helper functions ----------
+    # ──────────── helper functions ────────────
 
     def populate_dropdown_options():
         """Refresh Customer and Purity dropdown lists from DB."""
@@ -141,12 +166,18 @@ def build_reports_view(page: ft.Page):
             label = f"{cname} ({ccode})" if ccode else cname
             cust_options.append(ft.DropdownOption(key=cname, text=label))
         customer_dropdown.options = cust_options
+        valid_cust_keys = {opt.key for opt in cust_options}
+        if customer_dropdown.value not in valid_cust_keys:
+            customer_dropdown.value = "ALL"
 
         # Purities
         purity_options = [ft.DropdownOption(key="ALL", text="All Purities")]
         for p in fetch_report_purities():
             purity_options.append(ft.DropdownOption(key=p, text=p))
         purity_dropdown.options = purity_options
+        valid_purity_keys = {opt.key for opt in purity_options}
+        if purity_dropdown.value not in valid_purity_keys:
+            purity_dropdown.value = "ALL"
 
     def resolve_date_range():
         """Compute start_date and end_date strings based on preset or custom input."""
@@ -204,74 +235,25 @@ def build_reports_view(page: ft.Page):
         apply_filters(update_page=True)
 
     # Wire handlers
-    customer_dropdown.on_change = lambda e: apply_filters(e, update_page=True)
-    date_preset_dropdown.on_change = on_date_preset_change
-    purity_dropdown.on_change = lambda e: apply_filters(e, update_page=True)
-    from_date_field.on_change = lambda e: apply_filters(e, update_page=True)
-    to_date_field.on_change = lambda e: apply_filters(e, update_page=True)
+    customer_dropdown.on_select = lambda e: apply_filters(e, update_page=True)
+    date_preset_dropdown.on_select = on_date_preset_change
+    purity_dropdown.on_select = lambda e: apply_filters(e, update_page=True)
     search_field.on_change = lambda e: apply_filters(e, update_page=True)
 
-    # ---------- table & metrics rendering ----------
+    # ──────────── table rendering ────────────
 
     def render_report(records, update_page=True):
         if not records:
             table_container.visible = False
             empty_container.visible = True
-            kpi_items_val.value = "0"
-            kpi_net_val.value = "0.000 g"
-            kpi_gross_val.value = "0.000 g"
-            kpi_cust_val.value = "0"
-            purity_card_container.visible = False
+            table_section_label.value = "REPORT RECORDS · 0 ITEMS"
             export_csv_btn.disabled = True
             export_pdf_btn.disabled = True
             if update_page:
-                for ctrl in [table_container, empty_container, purity_card_container, kpi_cards_row, filters_panel, export_csv_btn, export_pdf_btn]:
-                    try:
-                        ctrl.update()
-                    except Exception:
-                        pass
-                try:
-                    page.update()
-                except Exception:
-                    pass
+                page.update()
             return
 
-        total_items = len(records)
-        total_net = sum(r["net_weight"] for r in records)
-        total_gross = sum(r["gross_weight"] for r in records)
-        unique_customers = len({r["customer_name"] for r in records if r["customer_name"] != "—"})
-
-        kpi_items_val.value = str(total_items)
-        kpi_net_val.value = f"{total_net:.3f} g"
-        kpi_gross_val.value = f"{total_gross:.3f} g"
-        kpi_cust_val.value = str(unique_customers)
-
-        # Purity breakdown calculation
-        purity_dict = {}
-        for r in records:
-            p = r["purity"]
-            if p not in purity_dict:
-                purity_dict[p] = {"count": 0, "net": 0.0}
-            purity_dict[p]["count"] += 1
-            purity_dict[p]["net"] += r["net_weight"]
-
-        pb_controls = []
-        for p_name, p_data in sorted(purity_dict.items()):
-            pb_controls.append(
-                ft.Row(
-                    [
-                        ft.Text(f"Purity {p_name}", color=IVORY, size=12.5, weight=ft.FontWeight.W_600),
-                        ft.Text(
-                            f"{p_data['count']} items  ·  {p_data['net']:.3f} g",
-                            color=BRASS,
-                            size=12,
-                        ),
-                    ],
-                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                )
-            )
-        purity_breakdown_column.controls = pb_controls
-        purity_card_container.visible = True
+        table_section_label.value = f"REPORT RECORDS · {len(records)} ITEMS"
 
         # Render rows
         row_controls = []
@@ -294,17 +276,9 @@ def build_reports_view(page: ft.Page):
         export_csv_btn.disabled = False
         export_pdf_btn.disabled = False
         if update_page:
-            for ctrl in [table_container, empty_container, purity_card_container, kpi_cards_row, filters_panel, export_csv_btn, export_pdf_btn]:
-                try:
-                    ctrl.update()
-                except Exception:
-                    pass
-            try:
-                page.update()
-            except Exception:
-                pass
+            page.update()
 
-    # ---------- exports (CSV & PDF) ----------
+    # ──────────── exports (CSV & PDF) ────────────
     export_picker = ft.FilePicker()
     page.services.append(export_picker)
 
@@ -466,40 +440,10 @@ def build_reports_view(page: ft.Page):
             snack(page, f"Export failed: {ex}", accent=CLAY)
         page.update()
 
-    export_csv_btn = primary_button("Export Report CSV", on_click=on_export_csv_click, icon=ft.Icons.FILE_DOWNLOAD_OUTLINED, expand=True)
-    export_pdf_btn = primary_button("Export Report PDF", on_click=on_export_pdf_click, icon=ft.Icons.PICTURE_AS_PDF_OUTLINED, expand=True)
+    export_csv_btn = primary_button("Export CSV", on_click=on_export_csv_click, icon=ft.Icons.FILE_DOWNLOAD_OUTLINED, expand=True)
+    export_pdf_btn = primary_button("Export PDF", on_click=on_export_pdf_click, icon=ft.Icons.PICTURE_AS_PDF_OUTLINED, expand=True)
 
-    # ---------- KPI card builder helper ----------
-    def make_kpi_card(title, value_ctrl, icon, color):
-        return app_card(
-            content=ft.Column(
-                [
-                    ft.Row(
-                        [
-                            ft.Text(title.upper(), size=10, weight=ft.FontWeight.W_700, color=SLATE),
-                            ft.Icon(icon, size=16, color=color),
-                        ],
-                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                    ),
-                    ft.Container(height=2),
-                    value_ctrl,
-                ],
-                spacing=0,
-            ),
-            padding=SPACE_MD,
-        )
-
-    kpi_cards_row = ft.Row(
-        [
-            ft.Container(make_kpi_card("Total Items", kpi_items_val, ft.Icons.INVENTORY_2_OUTLINED, BRASS), expand=True),
-            ft.Container(make_kpi_card("Net Weight", kpi_net_val, ft.Icons.SCALE_OUTLINED, BRASS), expand=True),
-            ft.Container(make_kpi_card("Gross Weight", kpi_gross_val, ft.Icons.MONETIZATION_ON_OUTLINED, IVORY), expand=True),
-            ft.Container(make_kpi_card("Customers", kpi_cust_val, ft.Icons.PEOPLE_OUTLINE, EMERALD), expand=True),
-        ],
-        spacing=SPACE_SM,
-    )
-
-    # Filter Toolbar layout
+    # ──────────── Filter panel ────────────
     filters_header = ft.Row(
         [
             eyebrow_text("Filter Reports"),
@@ -513,8 +457,14 @@ def build_reports_view(page: ft.Page):
         spacing=SPACE_SM,
     )
 
-    dropdowns_row = ft.Row(
-        [customer_dropdown, date_preset_dropdown, purity_dropdown],
+    dropdowns_row = ft.Column(
+        [
+            customer_dropdown,
+            ft.Row(
+                [date_preset_dropdown, purity_dropdown],
+                spacing=SPACE_SM,
+            ),
+        ],
         spacing=SPACE_SM,
     )
 
@@ -532,28 +482,25 @@ def build_reports_view(page: ft.Page):
         padding=SPACE_MD,
     )
 
-    # Initial data load without calling page.update()
+    # Initial data load
     populate_dropdown_options()
     apply_filters(update_page=False)
 
+    # ──────────── Main view ────────────
     view = ft.Container(
         content=ft.Column(
             [
-                heading_text("Stock & Customer Reports", size=20),
-                subheading_text("Analyze assigned stock items with flexible filters, metrics, and export options"),
-                ft.Container(height=SPACE_SM),
-                kpi_cards_row,
-                ft.Container(height=SPACE_SM),
+                eyebrow_text("Stock & Customer Reports"),
+                ft.Container(height=SPACE_XS),
                 filters_panel,
                 ft.Container(height=SPACE_MD),
-                eyebrow_text("Customer Assigned Stock Table"),
+                table_section_label,
                 ft.Container(height=SPACE_XS),
                 table_container,
                 empty_container,
-                ft.Container(height=SPACE_MD),
-                purity_card_container,
-                ft.Container(height=SPACE_SM),
+                ft.Container(height=SPACE_LG),
                 ft.Row([export_csv_btn, export_pdf_btn], spacing=SPACE_SM),
+                ft.Container(height=SPACE_LG),
             ],
             spacing=SPACE_SM,
             scroll=ft.ScrollMode.AUTO,
